@@ -262,6 +262,8 @@ async fn reindex_index_with_client(
     }
 
     // Additional check: validate index integrity before saving
+    println!("INFO: Waiting 5 seconds for index record to be written to table before validation...");
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     println!("INFO: Validating index integrity before saving.");
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
 
