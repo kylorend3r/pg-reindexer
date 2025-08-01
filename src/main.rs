@@ -54,6 +54,10 @@ struct Args {
     #[arg(short = 'i', long, default_value = "false")]
     skip_inactive_replication_slots: bool,
 
+    /// Skip sync replication connection check
+    #[arg(short = 'r', long, default_value = "false")]
+    skip_sync_replication_connection: bool,
+
     /// Maximum index size in GB (default: 1024 GB = 1TB)
     #[arg(
         short = 'm',
@@ -94,6 +98,13 @@ async fn get_inactive_replication_slots(client: &tokio_postgres::Client) -> Resu
     let rows = client.query(queries::GET_INACTIVE_REPLICATION_SLOT_COUNT, &[]).await.context("Failed to query inactive replication slots")?;
     let inactive_replication_slot_count: i64 = rows.first().unwrap().get(0);
     Ok(inactive_replication_slot_count > 0)
+}
+
+// check the sync replication connection
+async fn get_sync_replication_connection(client: &tokio_postgres::Client) -> Result<bool>{
+    let rows = client.query(queries::GET_SYNC_REPLICATION_CONNECTION_COUNT, &[]).await.context("Failed to query sync replication connection")?;
+    let sync_replication_connection_count: i64 = rows.first().unwrap().get(0);
+    Ok(sync_replication_connection_count > 0)
 }
 
 async fn get_indexes_in_schema(
@@ -190,6 +201,7 @@ async fn reindex_index_with_client(
     total_indexes: usize,
     verbose: bool,
     skip_inactive_replication_slots: bool,
+    skip_sync_replication_connection: bool,
 ) -> Result<()> {
     println!(
         "[{}/{}] INFO: Reindexing {}.{} ({})...",
@@ -215,8 +227,9 @@ async fn reindex_index_with_client(
     let active_vacuum = get_active_vacuum(&client).await?;
     let active_pgreindexer = get_running_pgreindexer(&client).await?;
     let inactive_replication_slots = get_inactive_replication_slots(&client).await?;
+    let sync_replication_connection = get_sync_replication_connection(&client).await?;
 
-    if active_vacuum || active_pgreindexer || (inactive_replication_slots && !skip_inactive_replication_slots) {
+    if active_vacuum || active_pgreindexer || (inactive_replication_slots && !skip_inactive_replication_slots) || (sync_replication_connection && !skip_sync_replication_connection) {
         println!("  Note: Active vacuum, pgreindexer or inactive replication slots detected, skipping reindex");
 
         // Save skipped record to logbook
@@ -532,7 +545,7 @@ async fn main() -> Result<()> {
         let verbose = args.verbose;
         // pass the skip_inactive_replication_slots argument to the reindex_index_with_client function to decide if the reindex should be skipped or not.
         let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
-
+        let skip_sync_replication_connection = args.skip_sync_replication_connection;
         let task = tokio::spawn(async move {
             // Acquire permit from semaphore
             let _permit = semaphore.acquire().await.unwrap();
@@ -545,7 +558,8 @@ async fn main() -> Result<()> {
                 i,
                 total_indexes,
                 verbose,
-                skip_inactive_replication_slots
+                skip_inactive_replication_slots,
+                skip_sync_replication_connection
             )
             .await
         });

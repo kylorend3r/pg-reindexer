@@ -90,6 +90,11 @@ pub const GET_INACTIVE_REPLICATION_SLOT_COUNT: &str = r#"
     SELECT COUNT(*) FROM pg_replication_slots WHERE active = false;
 "#;
 
+// Get if there is any sync replication connection.
+pub const GET_SYNC_REPLICATION_CONNECTION_COUNT: &str = r#"
+    SELECT COUNT(*) FROM pg_stat_replication WHERE sync_state = 'sync';
+"#;
+
 // Session parameter queries
 pub const SET_STATEMENT_TIMEOUT: &str = "SET statement_timeout TO 0";
 pub const SET_IDLE_SESSION_TIMEOUT: &str = "SET idle_session_timeout TO 0";
