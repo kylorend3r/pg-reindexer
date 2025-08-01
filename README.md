@@ -126,6 +126,7 @@ cargo build --release
 | Max Size | `-m` | `--max-size-gb` | Maximum index size in GB | 1024 |
 | Skip Inactive Replication Slots | `-i` | `--skip-inactive-replication-slots` | Skip reindexing when inactive replication slots detected | false |
 | Skip Sync Replication Connection | `-r` | `--skip-sync-replication-connection` | Skip reindexing when sync replication connections detected | false |
+| Log File | `-l` | `--log-file` | Log file path (all output will be logged to this file) | reindexer.log |
 
 ### Environment Variables
 
@@ -171,7 +172,12 @@ export PG_PASSWORD=mypassword
 
 # Emergency reindexing (use with extreme caution)
 ./pg-reindexer -s public -i -r -n 1 -v
-```
+
+# Reindex with default logging (reindexer.log)
+./pg-reindexer -s public -v
+
+# Reindex with custom log file
+./pg-reindexer -s public -v -l custom.log
 
 ## Database Schema
 

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::{env, fs, path::Path, sync::Arc};
+use std::{env, fs, path::Path, sync::Arc, io::Write};
 use tokio::sync::Semaphore;
 use tokio_postgres::NoTls;
 mod queries;
@@ -66,6 +66,10 @@ struct Args {
         help = "Maximum index size in GB. Indexes larger than this will be excluded from reindexing"
     )]
     max_size_gb: u64,
+
+    /// Log file path (default: reindexer.log in current directory)
+    #[arg(short = 'l', long, default_value = "reindexer.log")]
+    log_file: String,
 }
 
 #[derive(Debug)]
@@ -73,6 +77,18 @@ struct IndexInfo {
     schema_name: String,
     index_name: String,
     index_type: String,
+}
+
+// Logging function that writes to both stdout and log file
+fn log_message(message: &str, log_file: &str) {
+    println!("{}", message);
+    
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file) {
+        let _ = writeln!(file, "{}", message);
+    }
 }
 
 // check if there is an already running pgreindexer process
@@ -202,20 +218,17 @@ async fn reindex_index_with_client(
     verbose: bool,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
+    log_file: String,
 ) -> Result<()> {
-    println!(
-        "[{}/{}] INFO: Reindexing {}.{} ({})...",
-        index_num + 1,
-        total_indexes,
-        schema_name,
-        index_name,
-        index_type
+    log_message(
+        &format!("[{}/{}] INFO: Reindexing {}.{} ({})...", index_num + 1, total_indexes, schema_name, index_name, index_type),
+        &log_file
     );
 
     // Get before size
     let before_size = get_index_size(&client, &schema_name, &index_name).await?;
     if verbose {
-        println!("  Before size: {}", format_size(before_size));
+        log_message(&format!("  Before size: {}", format_size(before_size)), &log_file);
     }
 
     let reindex_sql = format!(
@@ -230,7 +243,7 @@ async fn reindex_index_with_client(
     let sync_replication_connection = get_sync_replication_connection(&client).await?;
 
     if active_vacuum || active_pgreindexer || (inactive_replication_slots && !skip_inactive_replication_slots) || (sync_replication_connection && !skip_sync_replication_connection) {
-        println!("  Note: Active vacuum, pgreindexer or inactive replication slots detected, skipping reindex");
+        log_message("  Note: Active vacuum, pgreindexer or inactive replication slots detected, skipping reindex", &log_file);
 
         // Save skipped record to logbook
         let index_data = save::IndexData {
@@ -257,20 +270,20 @@ async fn reindex_index_with_client(
     let size_change = after_size - before_size;
 
     if verbose {
-        println!("  After size: {}", format_size(after_size));
-        println!("  Size change: {}", format_size(size_change));
+        log_message(&format!("  After size: {}", format_size(after_size)), &log_file);
+        log_message(&format!("  Size change: {}", format_size(size_change)), &log_file);
     }
 
     // Additional check: validate index integrity before saving
-    println!("INFO: Waiting 5 seconds for index record to be written to table before validation...");
+    log_message("INFO: Waiting 5 seconds for index record to be written to table before validation...", &log_file);
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-    println!("INFO: Validating index integrity before saving.");
+    log_message("INFO: Validating index integrity before saving.", &log_file);
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
 
     if !index_is_valid {
-        println!(
-            "  ⚠️  Warning: Index {}.{} failed integrity check after reindexing",
-            schema_name, index_name
+        log_message(
+            &format!("  ⚠️  Warning: Index {}.{} failed integrity check after reindexing", schema_name, index_name),
+            &log_file
         );
 
         // Save failed validation record
@@ -301,7 +314,7 @@ async fn reindex_index_with_client(
     save::save_index_info(&client, &index_data).await?;
 
     if verbose {
-        println!("  ✓ Successfully reindexed {}.{}", schema_name, index_name);
+        log_message(&format!("  ✓ Successfully reindexed {}.{}", schema_name, index_name), &log_file);
     }
 
     Ok(())
@@ -432,7 +445,7 @@ async fn main() -> Result<()> {
         connection_string.push_str(&format!(" password={}", pwd));
     }
 
-    println!("INFO: Connecting to PostgreSQL at {}:{}...", host, port);
+    log_message(&format!("INFO: Connecting to PostgreSQL at {}:{}...", host, port), &args.log_file);
 
     // Connect to PostgreSQL
     let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
@@ -447,14 +460,14 @@ async fn main() -> Result<()> {
     });
 
     if let Some(table) = &args.table {
-        println!(
-            "INFO: Getting indexes in schema '{}' for table '{}' (max size: {} GB)...",
-            args.schema, table, args.max_size_gb
+        log_message(
+            &format!("INFO: Getting indexes in schema '{}' for table '{}' (max size: {} GB)...", args.schema, table, args.max_size_gb),
+            &args.log_file
         );
     } else {
-        println!(
-            "INFO: Getting indexes in schema '{}' (max size: {} GB)...",
-            args.schema, args.max_size_gb
+        log_message(
+            &format!("INFO: Getting indexes in schema '{}' (max size: {} GB)...", args.schema, args.max_size_gb),
+            &args.log_file
         );
     }
 
@@ -469,65 +482,59 @@ async fn main() -> Result<()> {
 
     if indexes.is_empty() {
         if let Some(table) = &args.table {
-            println!(
-                "INFO: No indexes found in schema '{}' for table '{}'",
-                args.schema, table
+            log_message(
+                &format!("INFO: No indexes found in schema '{}' for table '{}'", args.schema, table),
+                &args.log_file
             );
         } else {
-            println!("INFO: No indexes found in schema '{}'", args.schema);
+            log_message(&format!("INFO: No indexes found in schema '{}'", args.schema), &args.log_file);
         }
         return Ok(());
     }
 
     if let Some(table) = &args.table {
-        println!(
-            "INFO: Found {} indexes in schema '{}' for table '{}':",
-            indexes.len(),
-            args.schema,
-            table
+        log_message(
+            &format!("INFO: Found {} indexes in schema '{}' for table '{}':", indexes.len(), args.schema, table),
+            &args.log_file
         );
     } else {
-        println!(
-            "INFO: Found {} indexes in schema '{}':",
-            indexes.len(),
-            args.schema
+        log_message(
+            &format!("INFO: Found {} indexes in schema '{}':", indexes.len(), args.schema),
+            &args.log_file
         );
     }
 
     if args.dry_run {
-        println!("INFO: Dry Run Mode - No indexes will be reindexed");
-        println!("INFO: The following reindex commands would be executed:\n");
-        println!("{}", "=".repeat(60));
+        log_message("INFO: Dry Run Mode - No indexes will be reindexed", &args.log_file);
+        log_message("INFO: The following reindex commands would be executed:\n", &args.log_file);
+        log_message(&format!("{}", "=".repeat(60)), &args.log_file);
 
         for (i, index) in indexes.iter().enumerate() {
             let reindex_sql = format!(
                 "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
                 index.schema_name, index.index_name
             );
-            println!("[{}/{}] {}", i + 1, indexes.len(), reindex_sql);
+            log_message(&format!("[{}/{}] {}", i + 1, indexes.len(), reindex_sql), &args.log_file);
         }
 
-        println!("{}", "=".repeat(60));
-        println!("\nINFO: Total indexes to reindex: {}", indexes.len());
-        println!("HINT: To actually reindex, run without --dry-run flag");
+        log_message(&format!("{}", "=".repeat(60)), &args.log_file);
+        log_message(&format!("\nINFO: Total indexes to reindex: {}", indexes.len()), &args.log_file);
+        log_message("HINT: To actually reindex, run without --dry-run flag", &args.log_file);
         return Ok(());
     }
     set_session_parameters(&client).await?;
-    println!("INFO: Session parameters set.");
-    println!("INFO: Checking if the schema exists to store the reindex information.");
+    log_message("INFO: Session parameters set.", &args.log_file);
+    log_message("INFO: Checking if the schema exists to store the reindex information.", &args.log_file);
     match schema::create_index_info_table(&client).await {
         Ok(_) => {
-            println!("INFO: Schema check passed.");
+            log_message("INFO: Schema check passed.", &args.log_file);
         }
         Err(e) => {
             eprintln!("INFO: Failed to create reindex_logbook table: {}", e);
         }
     }
 
-    println!(
-        "\nINFO: Starting concurrent reindex process with {} threads...",
-        args.threads
-    );
+    log_message(&format!("\nINFO: Starting concurrent reindex process with {} threads...", args.threads), &args.log_file);
     let start_time = std::time::Instant::now();
 
     // Create a semaphore to limit concurrent operations
@@ -548,6 +555,7 @@ async fn main() -> Result<()> {
         // pass the skip_inactive_replication_slots argument to the reindex_index_with_client function to decide if the reindex should be skipped or not.
         let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
         let skip_sync_replication_connection = args.skip_sync_replication_connection;
+        let log_file = args.log_file.clone();
         let task = tokio::spawn(async move {
             // Acquire permit from semaphore
             let _permit = semaphore.acquire().await.unwrap();
@@ -561,7 +569,8 @@ async fn main() -> Result<()> {
                 total_indexes,
                 verbose,
                 skip_inactive_replication_slots,
-                skip_sync_replication_connection
+                skip_sync_replication_connection,
+                log_file
             )
             .await
         });
@@ -591,12 +600,12 @@ async fn main() -> Result<()> {
 
     let duration = start_time.elapsed();
 
-    println!("\nReindex Summary:");
-    println!("  Total indexes: {}", total_indexes);
-    println!("  Successful: {}", success_count);
-    println!("  Failed: {}", error_count);
-    println!("  Duration: {:.2?}", duration);
-    println!("  Concurrent threads used: {}", args.threads);
+    log_message("\nReindex Summary:", &args.log_file);
+    log_message(&format!("  Total indexes: {}", total_indexes), &args.log_file);
+    log_message(&format!("  Successful: {}", success_count), &args.log_file);
+    log_message(&format!("  Failed: {}", error_count), &args.log_file);
+    log_message(&format!("  Duration: {:.2?}", duration), &args.log_file);
+    log_message(&format!("  Concurrent threads used: {}", args.threads), &args.log_file);
 
     Ok(())
 }
