@@ -2,16 +2,24 @@
 
 A high-performance, production-ready PostgreSQL index maintenance tool written in Rust. This tool provides safe, efficient, and controlled reindexing operations with intelligent resource management and comprehensive logging.
 
-## Why This Tool?
+## Purpose
 
+PostgreSQL's native `REINDEX` command is powerful but lacks the orchestration capabilities needed for production environments. This Rust-based tool bridges that gap by providing:
+
+- **Safe Concurrent Operations**: Thread-safe reindexing with built-in conflict detection
+- **Granular Control**: Target specific schemas, tables, or individual indexes
+- **Resource Management**: Configurable threading for optimal performance vs. resource usage
+- **Production Safety**: Built-in safeguards against conflicts with other maintenance operations
+- **Replication Safety**: Advanced checks for replication slots and sync connections
+- **Comprehensive Logging**: Track all reindex operations with detailed before/after metrics
+
+## Great Features
 
 ### 🎯 **Granular Control for Maintenance Categorization**
 - **Schema-level operations**: Reindex all indexes in a specific schema for comprehensive maintenance
 - **Table-level precision**: Target specific tables for focused maintenance cycles
 - **Categorized maintenance**: Organize maintenance processes by business logic (e.g., user tables, order tables, reporting tables)
 - **Selective reindexing**: Choose exactly which indexes to maintain based on your maintenance strategy
-
-See [Maintenance Categorization Examples](#maintenance-categorization-examples) for practical usage patterns.
 
 ### 🔧 **Smart Index Selection**
 - **B-tree focus**: Optimized for the most common index type in PostgreSQL
@@ -25,36 +33,42 @@ See [Maintenance Categorization Examples](#maintenance-categorization-examples) 
 - **Adaptive processing**: Scale up for maintenance windows, scale down for production hours
 - **Progress tracking**: Real-time monitoring of concurrent operations
 
-See [Thread Management & Resource Control](#thread-management--resource-control) for more details.
-
 ### 🛡️ **Built for Safety and Reliability**
-- **Rust-powered**: Memory-safe, thread-safe, and crash-resistant
-- **Memory Safety**: Zero-cost abstractions with guaranteed memory safety
-- **Thread Safety**: Built-in concurrency primitives prevent race conditions
-- **Crash Resistance**: Rust's ownership system prevents common programming errors
-- **High Performance**: Compiled to native code for maximum efficiency
 - **Non-blocking operations**: Uses `REINDEX INDEX CONCURRENTLY` to minimize downtime
 - **Conflict detection**: Automatically skips operations when vacuums or other processes are active
 - **Replication safety**: Built-in checks for inactive replication slots and sync replication connections
 - **Production controls**: Configurable safety overrides for maintenance windows and emergency operations
+- **Index validation**: Automatic integrity checks after each reindex operation
 - **Dry run mode**: Preview operations before execution
-- **Error handling**: Comprehensive error reporting and logging
-- **Conflict resolution**: Intelligent handling of concurrent operations
-
-See [Safety Features](#safety-features) for more details.
-
-## Purpose
-
-PostgreSQL's native `REINDEX` command is powerful but lacks the orchestration capabilities needed for production environments. This Rust-based tool bridges that gap by providing:
-
-- **Safe Concurrent Operations**: Thread-safe reindexing with built-in conflict detection
-- **Granular Control**: Target specific schemas, tables, or individual indexes
-- **Resource Management**: Configurable threading for optimal performance vs. resource usage
-- **Production Safety**: Built-in safeguards against conflicts with other maintenance operations
-- **Replication Safety**: Advanced checks for replication slots and sync connections
-- **Comprehensive Logging**: Track all reindex operations with detailed before/after metrics
 
 
+### Index Integrity Validation
+
+The tool automatically validates each index after reindexing to ensure the operation was successful:
+
+- **Automatic Validation**: Every reindexed index undergoes an integrity check
+- **Safety Delay**: 5-second delay ensures PostgreSQL metadata is fully updated before validation
+- **Comprehensive Checks**: Validates index state, readiness, and liveliness
+- **Failure Tracking**: Failed validations are logged with detailed status information
+- **Status Recording**: Validation results are saved to the reindex logbook
+
+### Production Safety Controls
+
+The tool includes advanced safety controls for production environments with replication:
+
+#### Replication Safety Checks
+
+- **Inactive Replication Slots Detection** (`-i`, `--skip-inactive-replication-slots`):
+  - Automatically detects inactive replication slots that could cause replication lag
+  - When enabled, skips reindexing operations if inactive slots are detected
+  - Prevents WAL accumulation that could impact downstream replicas
+  - Default: `false` (safety check enabled)
+
+- **Sync Replication Connection Detection** (`-r`, `--skip-sync-replication-connection`):
+  - Monitors for synchronous replication connections
+  - Skips reindexing when sync replication is active to prevent blocking
+  - Ensures high-availability setups remain unaffected
+  - Default: `false` (safety check enabled)
 
 ## Installation
 
@@ -63,29 +77,6 @@ PostgreSQL's native `REINDEX` command is powerful but lacks the orchestration ca
 - Rust 1.70+ 
 - PostgreSQL 12+ (for concurrent reindex support)
 - Access to PostgreSQL database
-
-### Optional Pre-requirements
-
-The tool automatically creates the required database schema and tables for logging reindex operations. However, you can optionally create them manually before execution for better control:
-
-```sql
--- Create the reindexer schema (optional)
-CREATE SCHEMA IF NOT EXISTS reindexer;
-
--- Create the reindex_logbook table (optional)
-CREATE TABLE IF NOT EXISTS reindexer.reindex_logbook (
-    schema_name VARCHAR(255) NOT NULL,
-    index_name VARCHAR(255) NOT NULL,
-    index_type VARCHAR(255) NOT NULL,
-    reindex_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    reindex_status VARCHAR(255) NOT NULL,
-    before_size BIGINT,
-    after_size BIGINT,
-    size_change BIGINT
-);
-```
-
-**Note**: If you don't create the schema manually, the tool will automatically create it during execution.
 
 ### Build from Source
 
@@ -136,7 +127,6 @@ cargo build --release
 | Skip Inactive Replication Slots | `-i` | `--skip-inactive-replication-slots` | Skip reindexing when inactive replication slots detected | false |
 | Skip Sync Replication Connection | `-r` | `--skip-sync-replication-connection` | Skip reindexing when sync replication connections detected | false |
 
-
 ### Environment Variables
 
 Configure the tool using environment variables for seamless integration:
@@ -166,33 +156,9 @@ export PG_PASSWORD=mypassword
 ./pg-reindexer -s public --dry-run
 ```
 
-This will show the exact SQL commands that would be executed:
-```
-INFO: Dry Run Mode - No indexes will be reindexed
-INFO: The following reindex commands would be executed:
-
-============================================================
-[1/3] REINDEX INDEX CONCURRENTLY "public"."users_email_idx"
-[2/3] REINDEX INDEX CONCURRENTLY "public"."users_created_at_idx"
-[3/3] REINDEX INDEX CONCURRENTLY "public"."orders_status_idx"
-============================================================
-
-INFO: Total indexes to reindex: 3
-HINT: To actually reindex, run without --dry-run flag
-```
-
 #### High-Performance Reindexing
 ```bash
 ./pg-reindexer -s public -n 8 -v
-```
-
-#### Custom Size Limits
-```bash
-# Reindex indexes up to 2TB in size
-./pg-reindexer -s public -m 2048 -v
-
-# Only reindex small indexes (up to 100GB)
-./pg-reindexer -s public -m 100 -v
 ```
 
 #### Production Safety Examples
@@ -207,11 +173,9 @@ HINT: To actually reindex, run without --dry-run flag
 ./pg-reindexer -s public -i -r -n 1 -v
 ```
 
-
-
 ## Database Schema
 
-The tool automatically creates a `reindexer` schema with a `reindex_logbook` table to track reindexing operations. You can also create these manually before execution (see Optional Pre-requirements section above):
+The tool automatically creates a `reindexer` schema with a `reindex_logbook` table to track reindexing operations:
 
 ```sql
 CREATE SCHEMA reindexer;
@@ -230,146 +194,13 @@ CREATE TABLE reindexer.reindex_logbook (
 
 ### Logbook Status Values
 
-- `success`: Index was successfully reindexed
+- `success`: Index was successfully reindexed and validated
+- `validation_failed`: Index reindexing completed but validation failed
 - `skipped`: Index was skipped due to active vacuum or other pgreindexer processes
-
-
-
-## Concurrent Reindexing
-
-The tool uses PostgreSQL's `REINDEX INDEX CONCURRENTLY` command by default:
-
-- **Requirements**: PostgreSQL 12+
-- **Benefits**: Non-blocking reindexing that doesn't lock the table
-- **Limitations**: Cannot be used on primary keys or unique constraints (automatically filtered)
-
-## Thread Management & Resource Control
-
-Control the concurrency of reindex operations to match your environment and maintenance strategy:
-
-- **Default**: 2 concurrent threads (balanced for most environments)
-- **Configurable**: Use `-n` flag to adjust from 1 to 16+ threads
-- **Adaptive Usage**: Scale up during maintenance windows, down during peak hours
-- **Resource Balance**: Control how fast you want to complete tasks vs. system resource consumption
-- **Safety**: Automatic conflict detection prevents resource contention
-- **Monitoring**: Real-time progress reporting for each thread
-
-### Maintenance Categorization Examples
-
-```bash
-# User-related tables (fast, frequent maintenance)
-./pg-reindexer -s public -t users -n 4 -v
-
-# Order processing tables (medium priority)
-./pg-reindexer -s public -t orders -n 2 -v
-
-# Reporting tables (low priority, can be slower)
-./pg-reindexer -s public -t reporting -n 1 -v
-
-# Comprehensive schema maintenance (maintenance window)
-./pg-reindexer -s public -n 8 -v
-```
-
-## Safety Features
-
-Built-in safeguards for production environments:
-
-- **Dry Run Mode**: Preview operations without making changes
-- **Active Process Detection**: Skips reindexing when vacuum or other pgreindexer processes are active
-- **Size Limits**: Automatically excludes very large indexes
-- **Error Handling**: Comprehensive error reporting and logging
-- **Conflict Resolution**: Intelligent handling of concurrent operations
-
-### Production Safety Controls
-
-The tool includes advanced safety controls for production environments with replication:
-
-#### Replication Safety Checks
-
-- **Inactive Replication Slots Detection** (`-i`, `--skip-inactive-replication-slots`):
-  - Automatically detects inactive replication slots that could cause replication lag
-  - When enabled, skips reindexing operations if inactive slots are detected
-  - Prevents WAL accumulation that could impact downstream replicas
-  - Default: `false` (safety check enabled)
-
-- **Sync Replication Connection Detection** (`-r`, `--skip-sync-replication-connection`):
-  - Monitors for synchronous replication connections
-  - Skips reindexing when sync replication is active to prevent blocking
-  - Ensures high-availability setups remain unaffected
-  - Default: `false` (safety check enabled)
-
-#### Usage Examples
-
-```bash
-# Production-safe reindexing with all safety checks enabled (default)
-./pg-reindexer -s public -v
-
-# Skip inactive replication slot checks (use with caution)
-./pg-reindexer -s public -i -v
-
-# Skip sync replication connection checks (use with caution)
-./pg-reindexer -s public -r -v
-
-# Skip both replication safety checks (use only in controlled environments)
-./pg-reindexer -s public -i -r -v
-```
-
-#### When to Use Safety Overrides
-
-- **Development/Testing**: Safe to disable checks in non-production environments
-- **Maintenance Windows**: When replication is temporarily disabled
-- **Emergency Operations**: When immediate reindexing is required
-- **Controlled Environments**: When you have full control over replication state
-
-**⚠️ Warning**: Disabling these safety checks in production can impact replication performance and availability. Use with caution and ensure you understand the implications for your replication setup.
-
-## Performance Considerations
-
-Optimize your reindexing strategy:
-
-- **Thread Count**: Adjust `-n` based on your system resources (default: 2)
-- **Concurrent Mode**: Always uses concurrent reindexing to minimize downtime
-- **Verbose Mode**: Use `-v` for detailed progress reporting
-- **Table Targeting**: Use `-t` to reindex specific tables for faster execution
-- **Batch Scheduling**: Plan reindex jobs during low-traffic periods
-
-
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Permission Errors**: Ensure the PostgreSQL user has necessary permissions
-2. **Connection Issues**: Check host, port, and authentication settings
-3. **Schema Not Found**: Verify the schema name exists
-4. **Table Not Found**: Ensure the table exists in the specified schema
-
-### Error Messages
-
-- `Failed to connect to PostgreSQL`: Check connection parameters
-- `No indexes found`: Verify schema/table exists and contains indexes
-- `Active vacuum detected`: Wait for vacuum to complete or use different timing
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-The MIT License is a permissive license that allows:
-- ✅ Commercial use
-- ✅ Modification
-- ✅ Distribution
-- ✅ Private use
-- ✅ No liability for the authors
-
-This means you can use, modify, and distribute this software freely, including for commercial purposes.
 
 ## Support
 
