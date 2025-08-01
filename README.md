@@ -35,6 +35,8 @@ See [Thread Management & Resource Control](#thread-management--resource-control)
 - **High Performance**: Compiled to native code for maximum efficiency
 - **Non-blocking operations**: Uses `REINDEX INDEX CONCURRENTLY` to minimize downtime
 - **Conflict detection**: Automatically skips operations when vacuums or other processes are active
+- **Replication safety**: Built-in checks for inactive replication slots and sync replication connections
+- **Production controls**: Configurable safety overrides for maintenance windows and emergency operations
 - **Dry run mode**: Preview operations before execution
 - **Error handling**: Comprehensive error reporting and logging
 - **Conflict resolution**: Intelligent handling of concurrent operations
@@ -49,6 +51,7 @@ PostgreSQL's native `REINDEX` command is powerful but lacks the orchestration ca
 - **Granular Control**: Target specific schemas, tables, or individual indexes
 - **Resource Management**: Configurable threading for optimal performance vs. resource usage
 - **Production Safety**: Built-in safeguards against conflicts with other maintenance operations
+- **Replication Safety**: Advanced checks for replication slots and sync connections
 - **Comprehensive Logging**: Track all reindex operations with detailed before/after metrics
 
 
@@ -130,6 +133,8 @@ cargo build --release
 | Threads | `-n` | `--threads` | Number of concurrent threads | 2 |
 | Verbose | `-v` | `--verbose` | Verbose output | false |
 | Max Size | `-m` | `--max-size-gb` | Maximum index size in GB | 1024 |
+| Skip Inactive Replication Slots | `-i` | `--skip-inactive-replication-slots` | Skip reindexing when inactive replication slots detected | false |
+| Skip Sync Replication Connection | `-r` | `--skip-sync-replication-connection` | Skip reindexing when sync replication connections detected | false |
 
 
 ### Environment Variables
@@ -188,6 +193,18 @@ HINT: To actually reindex, run without --dry-run flag
 
 # Only reindex small indexes (up to 100GB)
 ./pg-reindexer -s public -m 100 -v
+```
+
+#### Production Safety Examples
+```bash
+# Safe production reindexing with all safety checks enabled
+./pg-reindexer -s public -v
+
+# Reindex during maintenance window (replication temporarily disabled)
+./pg-reindexer -s public -i -r -v
+
+# Emergency reindexing (use with extreme caution)
+./pg-reindexer -s public -i -r -n 1 -v
 ```
 
 
@@ -262,6 +279,49 @@ Built-in safeguards for production environments:
 - **Size Limits**: Automatically excludes very large indexes
 - **Error Handling**: Comprehensive error reporting and logging
 - **Conflict Resolution**: Intelligent handling of concurrent operations
+
+### Production Safety Controls
+
+The tool includes advanced safety controls for production environments with replication:
+
+#### Replication Safety Checks
+
+- **Inactive Replication Slots Detection** (`-i`, `--skip-inactive-replication-slots`):
+  - Automatically detects inactive replication slots that could cause replication lag
+  - When enabled, skips reindexing operations if inactive slots are detected
+  - Prevents WAL accumulation that could impact downstream replicas
+  - Default: `false` (safety check enabled)
+
+- **Sync Replication Connection Detection** (`-r`, `--skip-sync-replication-connection`):
+  - Monitors for synchronous replication connections
+  - Skips reindexing when sync replication is active to prevent blocking
+  - Ensures high-availability setups remain unaffected
+  - Default: `false` (safety check enabled)
+
+#### Usage Examples
+
+```bash
+# Production-safe reindexing with all safety checks enabled (default)
+./pg-reindexer -s public -v
+
+# Skip inactive replication slot checks (use with caution)
+./pg-reindexer -s public -i -v
+
+# Skip sync replication connection checks (use with caution)
+./pg-reindexer -s public -r -v
+
+# Skip both replication safety checks (use only in controlled environments)
+./pg-reindexer -s public -i -r -v
+```
+
+#### When to Use Safety Overrides
+
+- **Development/Testing**: Safe to disable checks in non-production environments
+- **Maintenance Windows**: When replication is temporarily disabled
+- **Emergency Operations**: When immediate reindexing is required
+- **Controlled Environments**: When you have full control over replication state
+
+**⚠️ Warning**: Disabling these safety checks in production can impact replication performance and availability. Use with caution and ensure you understand the implications for your replication setup.
 
 ## Performance Considerations
 
