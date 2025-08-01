@@ -1,0 +1,17 @@
+# Rust
+/target/
+/Cargo.lock
+/Cargo.toml.orig
+
+# IDEs and OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
