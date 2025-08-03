@@ -1,0 +1,58 @@
+# This workflow is for a Rust CLI project.
+# It runs on every push and pull request to the main branch.
+
+name: Pg-Reindexer CI
+
+# Define when the workflow should run
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+# Define the jobs for the workflow
+jobs:
+  build_and_test:
+    # Use the latest Ubuntu runner
+    runs-on: ubuntu-latest
+
+    # Define the steps for the job
+    steps:
+      # Step 1: Check out the repository code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Install the Rust toolchain
+      # The dtolnay/rust-toolchain action is a great way to ensure the correct Rust version is used.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Step 3: Cache dependencies to speed up future runs.
+      # This step caches the `~/.cargo/` and `target/` directories.
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Step 4: Run the project's tests
+      - name: Run tests
+        run: cargo test
+
+      # Step 5: Build the debug version of the project
+      - name: Build debug binary
+        run: cargo build
+
+      # Step 6: Execute the built binary with the --help flag
+      # This step verifies that the binary was built successfully and its help message works.
+      - name: Check --help command
+        run: ./target/debug/pg-reindexer --help
+        # IMPORTANT: Replace 'your-cli-name' with the actual name of your binary.
+        # This is typically the 'name' field in your Cargo.toml file.
