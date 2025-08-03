@@ -76,6 +76,15 @@ struct Args {
     )]
     maintenance_work_mem_gb: u64,
 
+    /// Maximum parallel maintenance workers (default: 2)
+    #[arg(
+        short = 'x',
+        long,
+        default_value = "2",
+        help = "Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety"
+    )]
+    max_parallel_maintenance_workers: u64,
+
     /// Log file path (default: reindexer.log in current directory)
     #[arg(short = 'l', long, default_value = "reindexer.log")]
     log_file: String,
@@ -329,7 +338,11 @@ async fn reindex_index_with_client(
     Ok(())
 }
 
-async fn set_session_parameters(client: &tokio_postgres::Client, maintenance_work_mem_gb: u64) -> Result<()> {
+async fn set_session_parameters(
+    client: &tokio_postgres::Client, 
+    maintenance_work_mem_gb: u64,
+    max_parallel_maintenance_workers: u64
+) -> Result<()> {
     // This function can be improved to set session parameters from the cli arguments.
     // For now set the session parameters to 0.
     client
@@ -350,6 +363,49 @@ async fn set_session_parameters(client: &tokio_postgres::Client, maintenance_wor
         .execute(format!("SET maintenance_work_mem TO '{}GB';", maintenance_work_mem_gb).as_str(), &[])
         .await
         .context("Set the maintenance work mem.")?;
+
+    // Get current max_parallel_workers setting
+    let rows = client
+        .query(queries::GET_MAX_PARALLEL_WORKERS, &[])
+        .await
+        .context("Failed to get max_parallel_workers setting")?;
+    
+    if let Some(row) = rows.first() {
+        let max_parallel_workers_str: String = row.get(0);
+        let max_parallel_workers: u64 = max_parallel_workers_str
+            .parse()
+            .context("Failed to parse max_parallel_workers value")?;
+        
+        // Safety check: ensure max_parallel_maintenance_workers is less than max_parallel_workers/2
+        let safe_limit = max_parallel_workers / 2;
+        if max_parallel_maintenance_workers >= max_parallel_workers {
+            return Err(anyhow::anyhow!(
+                "max_parallel_maintenance_workers ({}) must be less than max_parallel_workers ({})",
+                max_parallel_maintenance_workers,
+                max_parallel_workers
+            ));
+        }
+        
+        if max_parallel_maintenance_workers >= safe_limit {
+            return Err(anyhow::anyhow!(
+                "max_parallel_maintenance_workers ({}) must be less than max_parallel_workers/2 ({}) for safety",
+                max_parallel_maintenance_workers,
+                safe_limit
+            ));
+        }
+        
+        // Set max_parallel_maintenance_workers
+        client
+            .execute(
+                format!("SET max_parallel_maintenance_workers TO '{}';", max_parallel_maintenance_workers).as_str(),
+                &[]
+            )
+            .await
+            .context("Set the max_parallel_maintenance_workers.")?;
+    } else {
+        return Err(anyhow::anyhow!("Failed to get max_parallel_workers setting"));
+    }
+    
     Ok(())
 }
 
@@ -537,9 +593,10 @@ async fn main() -> Result<()> {
         log_message("HINT: To actually reindex, run without --dry-run flag", &args.log_file);
         return Ok(());
     }
-    set_session_parameters(&client, args.maintenance_work_mem_gb).await?;
+    set_session_parameters(&client, args.maintenance_work_mem_gb, args.max_parallel_maintenance_workers).await?;
     log_message("INFO: Session parameters set.", &args.log_file);
     log_message(&format!("INFO: Maintenance work mem set to {} GB", args.maintenance_work_mem_gb), &args.log_file);
+    log_message(&format!("INFO: Max parallel maintenance workers set to {}", args.max_parallel_maintenance_workers), &args.log_file);
     log_message("INFO: Checking if the schema exists to store the reindex information.", &args.log_file);
     match schema::create_index_info_table(&client).await {
         Ok(_) => {
