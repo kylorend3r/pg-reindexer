@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::{env, fs, path::Path, sync::Arc, io::Write};
+use std::{env, fs, path::Path, sync::Arc};
 use tokio::sync::Semaphore;
 use tokio_postgres::NoTls;
 mod queries;
 mod save;
 mod schema;
+mod logging;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
@@ -97,17 +98,7 @@ struct IndexInfo {
     index_type: String,
 }
 
-// Logging function that writes to both stdout and log file
-fn log_message(message: &str, log_file: &str) {
-    println!("{}", message);
-    
-    if let Ok(mut file) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_file) {
-        let _ = writeln!(file, "{}", message);
-    }
-}
+
 
 // check if there is an already running pgreindexer process
 async fn get_running_pgreindexer(client: &tokio_postgres::Client) -> Result<bool> {
@@ -236,18 +227,12 @@ async fn reindex_index_with_client(
     verbose: bool,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
-    log_file: String,
+    logger: Arc<logging::Logger>,
 ) -> Result<()> {
-    log_message(
-        &format!("[{}/{}] INFO: Reindexing {}.{} ({})...", index_num + 1, total_indexes, schema_name, index_name, index_type),
-        &log_file
-    );
+    logger.log_index_start(index_num, total_indexes, &schema_name, &index_name, &index_type);
 
     // Get before size
     let before_size = get_index_size(&client, &schema_name, &index_name).await?;
-    if verbose {
-        log_message(&format!("  Before size: {}", format_size(before_size)), &log_file);
-    }
 
     let reindex_sql = format!(
         "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
@@ -261,7 +246,7 @@ async fn reindex_index_with_client(
     let sync_replication_connection = get_sync_replication_connection(&client).await?;
 
     if active_vacuum || active_pgreindexer || (inactive_replication_slots && !skip_inactive_replication_slots) || (sync_replication_connection && !skip_sync_replication_connection) {
-        log_message("  Note: Active vacuum, pgreindexer or inactive replication slots detected, skipping reindex", &log_file);
+        logger.log_index_skipped(&schema_name, &index_name, "Active vacuum, pgreindexer or inactive replication slots detected");
 
         // Save skipped record to logbook
         let index_data = save::IndexData {
@@ -288,21 +273,17 @@ async fn reindex_index_with_client(
     let size_change = after_size - before_size;
 
     if verbose {
-        log_message(&format!("  After size: {}", format_size(after_size)), &log_file);
-        log_message(&format!("  Size change: {}", format_size(size_change)), &log_file);
+        logger.log_index_size_info(before_size, after_size, size_change);
     }
 
     // Additional check: validate index integrity before saving
-    log_message("INFO: Waiting 5 seconds for index record to be written to table before validation...", &log_file);
+    logger.log(logging::LogLevel::Info, "Waiting 5 seconds for index record to be written to table before validation...");
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-    log_message("INFO: Validating index integrity before saving.", &log_file);
+    logger.log(logging::LogLevel::Info, "Validating index integrity before saving.");
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
 
     if !index_is_valid {
-        log_message(
-            &format!("  ⚠️  Warning: Index {}.{} failed integrity check after reindexing", schema_name, index_name),
-            &log_file
-        );
+        logger.log_index_validation_failed(&schema_name, &index_name);
 
         // Save failed validation record
         let index_data = save::IndexData {
@@ -331,9 +312,7 @@ async fn reindex_index_with_client(
     };
     save::save_index_info(&client, &index_data).await?;
 
-    if verbose {
-        log_message(&format!("  ✓ Successfully reindexed {}.{}", schema_name, index_name), &log_file);
-    }
+    logger.log_index_success(&schema_name, &index_name);
 
     Ok(())
 }
@@ -469,16 +448,14 @@ fn get_password_from_pgpass(
     Ok(None)
 }
 
-fn format_size(bytes: i64) -> String {
-    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
 
-    let bytes_f = bytes as f64;
-    format!("{:.2} GB", bytes_f / GB)
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    
+    // Initialize logger
+    let logger = logging::Logger::new(args.log_file.clone());
 
     // Get connection parameters from command line arguments or environment variables
     let host = args
@@ -516,7 +493,7 @@ async fn main() -> Result<()> {
         connection_string.push_str(&format!(" password={}", pwd));
     }
 
-    log_message(&format!("INFO: Connecting to PostgreSQL at {}:{}...", host, port), &args.log_file);
+    logger.log(logging::LogLevel::Info, &format!("Connecting to PostgreSQL at {}:{}", host, port));
 
     // Connect to PostgreSQL
     let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
@@ -530,16 +507,14 @@ async fn main() -> Result<()> {
         }
     });
 
+    logger.log(logging::LogLevel::Success, "Successfully connected to PostgreSQL");
+
+    logger.log(logging::LogLevel::Info, &format!("Discovering indexes in schema '{}'", args.schema));
+    
     if let Some(table) = &args.table {
-        log_message(
-            &format!("INFO: Getting indexes in schema '{}' for table '{}' (max size: {} GB)...", args.schema, table, args.max_size_gb),
-            &args.log_file
-        );
+        logger.log(logging::LogLevel::Info, &format!("Filtering for table '{}' (max size: {} GB)", table, args.max_size_gb));
     } else {
-        log_message(
-            &format!("INFO: Getting indexes in schema '{}' (max size: {} GB)...", args.schema, args.max_size_gb),
-            &args.log_file
-        );
+        logger.log(logging::LogLevel::Info, &format!("Max index size: {} GB", args.max_size_gb));
     }
 
     // Get all indexes in the specified schema (and optionally table)
@@ -553,61 +528,44 @@ async fn main() -> Result<()> {
 
     if indexes.is_empty() {
         if let Some(table) = &args.table {
-            log_message(
-                &format!("INFO: No indexes found in schema '{}' for table '{}'", args.schema, table),
-                &args.log_file
-            );
+            logger.log(logging::LogLevel::Warning, &format!("No indexes found in schema '{}' for table '{}'", args.schema, table));
         } else {
-            log_message(&format!("INFO: No indexes found in schema '{}'", args.schema), &args.log_file);
+            logger.log(logging::LogLevel::Warning, &format!("No indexes found in schema '{}'", args.schema));
         }
         return Ok(());
     }
 
     if let Some(table) = &args.table {
-        log_message(
-            &format!("INFO: Found {} indexes in schema '{}' for table '{}':", indexes.len(), args.schema, table),
-            &args.log_file
-        );
+        logger.log(logging::LogLevel::Info, &format!("Found {} indexes in schema '{}' for table '{}'", indexes.len(), args.schema, table));
     } else {
-        log_message(
-            &format!("INFO: Found {} indexes in schema '{}':", indexes.len(), args.schema),
-            &args.log_file
-        );
+        logger.log(logging::LogLevel::Info, &format!("Found {} indexes in schema '{}'", indexes.len(), args.schema));
     }
 
     if args.dry_run {
-        log_message("INFO: Dry Run Mode - No indexes will be reindexed", &args.log_file);
-        log_message("INFO: The following reindex commands would be executed:\n", &args.log_file);
-        log_message(&format!("{}", "=".repeat(60)), &args.log_file);
-
-        for (i, index) in indexes.iter().enumerate() {
-            let reindex_sql = format!(
-                "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
-                index.schema_name, index.index_name
-            );
-            log_message(&format!("[{}/{}] {}", i + 1, indexes.len(), reindex_sql), &args.log_file);
-        }
-
-        log_message(&format!("{}", "=".repeat(60)), &args.log_file);
-        log_message(&format!("\nINFO: Total indexes to reindex: {}", indexes.len()), &args.log_file);
-        log_message("HINT: To actually reindex, run without --dry-run flag", &args.log_file);
+        logger.log_dry_run(&indexes);
         return Ok(());
     }
+
+    logger.log(logging::LogLevel::Info, &format!("Found {} indexes to process", indexes.len()));
+
+    logger.log(logging::LogLevel::Info, "Setting up session parameters and schema");
+    
     set_session_parameters(&client, args.maintenance_work_mem_gb, args.max_parallel_maintenance_workers).await?;
-    log_message("INFO: Session parameters set.", &args.log_file);
-    log_message(&format!("INFO: Maintenance work mem set to {} GB", args.maintenance_work_mem_gb), &args.log_file);
-    log_message(&format!("INFO: Max parallel maintenance workers set to {}", args.max_parallel_maintenance_workers), &args.log_file);
-    log_message("INFO: Checking if the schema exists to store the reindex information.", &args.log_file);
+    logger.log_session_parameters(args.maintenance_work_mem_gb, args.max_parallel_maintenance_workers);
+    
+    logger.log(logging::LogLevel::Info, "Checking if the schema exists to store the reindex information.");
     match schema::create_index_info_table(&client).await {
         Ok(_) => {
-            log_message("INFO: Schema check passed.", &args.log_file);
+            logger.log(logging::LogLevel::Success, "Schema check passed.");
         }
         Err(e) => {
-            eprintln!("INFO: Failed to create reindex_logbook table: {}", e);
+            logger.log(logging::LogLevel::Warning, &format!("Failed to create reindex_logbook table: {}", e));
         }
     }
 
-    log_message(&format!("\nINFO: Starting concurrent reindex process with {} threads...", args.threads), &args.log_file);
+    logger.log(logging::LogLevel::Success, "Session parameters and schema setup completed");
+
+    logger.log(logging::LogLevel::Info, &format!("Starting concurrent reindex process with {} threads", args.threads));
     let start_time = std::time::Instant::now();
 
     // Create a semaphore to limit concurrent operations
@@ -617,6 +575,7 @@ async fn main() -> Result<()> {
     // Create tasks for all indexes
     let mut tasks = Vec::new();
     let total_indexes = indexes.len();
+    let logger = Arc::new(logger);
 
     for (i, index) in indexes.iter().enumerate() {
         let client = client.clone();
@@ -628,7 +587,7 @@ async fn main() -> Result<()> {
         // pass the skip_inactive_replication_slots argument to the reindex_index_with_client function to decide if the reindex should be skipped or not.
         let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
         let skip_sync_replication_connection = args.skip_sync_replication_connection;
-        let log_file = args.log_file.clone();
+        let logger = logger.clone();
         let task = tokio::spawn(async move {
             // Acquire permit from semaphore
             let _permit = semaphore.acquire().await.unwrap();
@@ -643,7 +602,7 @@ async fn main() -> Result<()> {
                 verbose,
                 skip_inactive_replication_slots,
                 skip_sync_replication_connection,
-                log_file
+                logger
             )
             .await
         });
@@ -673,12 +632,10 @@ async fn main() -> Result<()> {
 
     let duration = start_time.elapsed();
 
-    log_message("\nReindex Summary:", &args.log_file);
-    log_message(&format!("  Total indexes: {}", total_indexes), &args.log_file);
-    log_message(&format!("  Successful: {}", success_count), &args.log_file);
-    log_message(&format!("  Failed: {}", error_count), &args.log_file);
-    log_message(&format!("  Duration: {:.2?}", duration), &args.log_file);
-    log_message(&format!("  Concurrent threads used: {}", args.threads), &args.log_file);
+    // Create a new logger for the final summary since we need mutable access
+    let final_logger = logging::Logger::new(args.log_file.clone());
+    final_logger.log_summary(total_indexes, success_count, error_count, duration, args.threads);
+    final_logger.log(logging::LogLevel::Success, "Reindex process completed");
 
     Ok(())
 }
