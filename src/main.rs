@@ -67,6 +67,15 @@ struct Args {
     )]
     max_size_gb: u64,
 
+    /// Maximum maintenance work mem in GB (default: 1 GB )
+    #[arg(
+        short = 'w',
+        long,
+        default_value = "1",
+        help = "Maximum maintenance work mem in GB"
+    )]
+    maintenance_work_mem_gb: u64,
+
     /// Log file path (default: reindexer.log in current directory)
     #[arg(short = 'l', long, default_value = "reindexer.log")]
     log_file: String,
@@ -320,7 +329,7 @@ async fn reindex_index_with_client(
     Ok(())
 }
 
-async fn set_session_parameters(client: &tokio_postgres::Client) -> Result<()> {
+async fn set_session_parameters(client: &tokio_postgres::Client, maintenance_work_mem_gb: u64) -> Result<()> {
     // This function can be improved to set session parameters from the cli arguments.
     // For now set the session parameters to 0.
     client
@@ -335,6 +344,12 @@ async fn set_session_parameters(client: &tokio_postgres::Client) -> Result<()> {
         .execute(queries::SET_APPLICATION_NAME, &[])
         .await
         .context("Set the application name.")?;
+
+    // The following operation defines the maintenance work mem in GB provided by the user.
+    client
+        .execute(format!("SET maintenance_work_mem TO '{}GB';", maintenance_work_mem_gb).as_str(), &[])
+        .await
+        .context("Set the maintenance work mem.")?;
     Ok(())
 }
 
@@ -522,8 +537,9 @@ async fn main() -> Result<()> {
         log_message("HINT: To actually reindex, run without --dry-run flag", &args.log_file);
         return Ok(());
     }
-    set_session_parameters(&client).await?;
+    set_session_parameters(&client, args.maintenance_work_mem_gb).await?;
     log_message("INFO: Session parameters set.", &args.log_file);
+    log_message(&format!("INFO: Maintenance work mem set to {} GB", args.maintenance_work_mem_gb), &args.log_file);
     log_message("INFO: Checking if the schema exists to store the reindex information.", &args.log_file);
     match schema::create_index_info_table(&client).await {
         Ok(_) => {
