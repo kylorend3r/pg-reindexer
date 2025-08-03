@@ -6,11 +6,10 @@ A high-performance, production-ready PostgreSQL index maintenance tool written i
 
 PostgreSQL's native `REINDEX` command is powerful but lacks the orchestration capabilities needed for production environments. This Rust-based tool bridges that gap by providing:
 
-- **Safe Concurrent Operations**: Thread-safe reindexing with built-in conflict detection
-- **Granular Control**: Target specific schemas, tables, or individual indexes
-- **Resource Management**: Configurable threading for optimal performance vs. resource usage
-- **Production Safety**: Built-in safeguards against conflicts with other maintenance operations
+- **Safe Concurrent Operations and Resource Management**: Thread-safe reindexing with built-in conflict detection and configurable threading for optimal performance vs. resource usage
 - **Replication Safety**: Advanced checks for replication slots and sync connections
+- **Production Safety**: Built-in safeguards against maintenance operations (VACUUM etc..) and previous active reindexer sessions.
+- **Granular Control**: Target specific schemas or tables to create a different indexing strategies increasing flexibility.
 - **Comprehensive Logging**: Track all reindex operations with detailed before/after metrics
 
 ## Great Features
@@ -19,7 +18,6 @@ PostgreSQL's native `REINDEX` command is powerful but lacks the orchestration ca
 - **Schema-level operations**: Reindex all indexes in a specific schema for comprehensive maintenance
 - **Table-level precision**: Target specific tables for focused maintenance cycles
 - **Categorized maintenance**: Organize maintenance processes by business logic (e.g., user tables, order tables, reporting tables)
-- **Selective reindexing**: Choose exactly which indexes to maintain based on your maintenance strategy
 
 ### 🔧 **Smart Index Selection**
 - **B-tree focus**: Optimized for the most common index type in PostgreSQL
@@ -40,6 +38,7 @@ PostgreSQL's native `REINDEX` command is powerful but lacks the orchestration ca
 - **Production controls**: Configurable safety overrides for maintenance windows and emergency operations
 - **Index validation**: Automatic integrity checks after each reindex operation
 - **Dry run mode**: Preview operations before execution
+- **Resource protection**: Configurable maintenance work memory and parallel worker limits to protect production systems
 
 
 ### Index Integrity Validation
@@ -55,6 +54,23 @@ The tool automatically validates each index after reindexing to ensure the opera
 ### Production Safety Controls
 
 The tool includes advanced safety controls for production environments with replication:
+
+#### Resource Protection Controls
+
+- **Maintenance Work Memory** (`-w`, `--maintenance-work-mem-gb`):
+  - Sets session-level `maintenance_work_mem` parameter to optimize index operation performance
+  - Larger values enable faster index operations by providing more memory for sorting and building
+  - Critical for large indexes that require significant memory for efficient reindexing
+  - Default: `1 GB` (conservative for production safety)
+  - **Production Tip**: Increase to 2-4 GB for large indexes, but monitor system memory usage
+
+- **Max Parallel Maintenance Workers** (`-x`, `--max-parallel-maintenance-workers`):
+  - Sets session-level `max_parallel_maintenance_workers` parameter with built-in safety checks
+  - Automatically validates against system `max_parallel_workers` setting
+  - Enforces safety limit of `max_parallel_workers/2` to prevent resource exhaustion
+  - Enables parallel index operations for improved performance while protecting system resources
+  - Default: `2` (balanced for safety and performance)
+  - **Production Tip**: Set to 4-8 for maintenance windows, 1-2 for production hours
 
 #### Replication Safety Checks
 
@@ -124,6 +140,8 @@ cargo build --release
 | Threads | `-n` | `--threads` | Number of concurrent threads | 2 |
 | Verbose | `-v` | `--verbose` | Verbose output | false |
 | Max Size | `-m` | `--max-size-gb` | Maximum index size in GB | 1024 |
+| Maintenance Work Mem | `-w` | `--maintenance-work-mem-gb` | Maintenance work memory in GB for faster index operations | 1 |
+| Max Parallel Maintenance Workers | `-x` | `--max-parallel-maintenance-workers` | Max parallel maintenance workers (must be < max_parallel_workers/2) | 2 |
 | Skip Inactive Replication Slots | `-i` | `--skip-inactive-replication-slots` | Skip reindexing when inactive replication slots detected | false |
 | Skip Sync Replication Connection | `-r` | `--skip-sync-replication-connection` | Skip reindexing when sync replication connections detected | false |
 | Log File | `-l` | `--log-file` | Log file path (all output will be logged to this file) | reindexer.log |
@@ -161,23 +179,6 @@ export PG_PASSWORD=mypassword
 ```bash
 ./pg-reindexer -s public -n 8 -v
 ```
-
-#### Production Safety Examples
-```bash
-# Safe production reindexing with all safety checks enabled
-./pg-reindexer -s public -v
-
-# Reindex during maintenance window (replication temporarily disabled)
-./pg-reindexer -s public -i -r -v
-
-# Emergency reindexing (use with extreme caution)
-./pg-reindexer -s public -i -r -n 1 -v
-
-# Reindex with default logging (reindexer.log)
-./pg-reindexer -s public -v
-
-# Reindex with custom log file
-./pg-reindexer -s public -v -l custom.log
 
 ## Database Schema
 

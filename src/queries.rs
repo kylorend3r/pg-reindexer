@@ -99,3 +99,6 @@ pub const GET_SYNC_REPLICATION_CONNECTION_COUNT: &str = r#"
 pub const SET_STATEMENT_TIMEOUT: &str = "SET statement_timeout TO 0";
 pub const SET_IDLE_SESSION_TIMEOUT: &str = "SET idle_session_timeout TO 0";
 pub const SET_APPLICATION_NAME: &str = "SET application_name TO 'reindexer'";
+
+// Get max_parallel_workers setting
+pub const GET_MAX_PARALLEL_WORKERS: &str = "SHOW max_parallel_workers";
