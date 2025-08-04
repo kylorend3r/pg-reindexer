@@ -136,4 +136,4 @@ pub async fn create_connection_with_session_parameters(
     .await?;
 
     Ok(client)
-} 
+}
