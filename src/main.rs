@@ -53,7 +53,7 @@ struct Args {
     #[arg(short = 'f', long, default_value = "false")]
     dry_run: bool,
 
-    /// Number of concurrent threads for reindexing (default: 2)
+    /// Number of concurrent threads for reindexing (default: 2, max: 32)
     #[arg(short = 'n', long, default_value = "2")]
     threads: usize,
 
@@ -87,12 +87,12 @@ struct Args {
     )]
     maintenance_work_mem_gb: u64,
 
-    /// Maximum parallel maintenance workers (default: 2)
+    /// Maximum parallel maintenance workers (default: 2, 0 = use PostgreSQL default)
     #[arg(
         short = 'x',
         long,
         default_value = "2",
-        help = "Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety"
+        help = "Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2)"
     )]
     max_parallel_maintenance_workers: u64,
 
@@ -234,6 +234,70 @@ async fn main() -> Result<()> {
         logging::LogLevel::Success,
         "Successfully connected to PostgreSQL",
     );
+
+    // Validate thread count and parallel worker settings
+    logger.log(
+        logging::LogLevel::Info,
+        "Validating thread count and parallel worker settings...",
+    );
+
+    // Check maximum thread limit
+    if args.threads > 32 {
+        return Err(anyhow::anyhow!(
+            "Thread count ({}) exceeds maximum limit of 32. Please reduce the number of threads.",
+            args.threads
+        ));
+    }
+
+    // Get current max_parallel_workers setting
+    let rows = client
+        .query(queries::GET_MAX_PARALLEL_WORKERS, &[])
+        .await
+        .context("Failed to get max_parallel_workers setting")?;
+
+    if let Some(row) = rows.first() {
+        let max_parallel_workers_str: String = row.get(0);
+        let max_parallel_workers: u64 = max_parallel_workers_str
+            .parse()
+            .context("Failed to parse max_parallel_workers value")?;
+
+        // Calculate total workers that would be used
+        // When max_parallel_maintenance_workers is 0, PostgreSQL uses default (typically 2)
+        let effective_maintenance_workers = if args.max_parallel_maintenance_workers == 0 {
+            2 // Default PostgreSQL behavior
+        } else {
+            args.max_parallel_maintenance_workers
+        };
+        
+        let total_workers = args.threads as u64 * effective_maintenance_workers;
+
+        if total_workers > max_parallel_workers {
+            return Err(anyhow::anyhow!(
+                "Configuration would exceed PostgreSQL's max_parallel_workers limit. \
+                Threads ({}) × effective_maintenance_workers ({}) = {} workers, \
+                but max_parallel_workers is {}. \
+                Note: When max_parallel_maintenance_workers is 0, PostgreSQL uses default of 2 workers. \
+                Please reduce either --threads or --max-parallel-maintenance-workers.",
+                args.threads,
+                effective_maintenance_workers,
+                total_workers,
+                max_parallel_workers
+            ));
+        }
+
+        logger.log(
+            logging::LogLevel::Success,
+            &format!(
+                "Validation passed: {} threads × {} workers = {} total workers (max: {})",
+                args.threads,
+                effective_maintenance_workers,
+                total_workers,
+                max_parallel_workers
+            ),
+        );
+    } else {
+        return Err(anyhow::anyhow!("Failed to get max_parallel_workers setting"));
+    }
 
     logger.log(
         logging::LogLevel::Info,
