@@ -271,7 +271,7 @@ async fn reindex_index_with_client(
             schema_name: schema_name.clone(),
             index_name: index_name.clone(),
             index_type: index_type.clone(),
-            reindex_status: "invalid-index".to_string(),
+            reindex_status: "invalid_index".to_string(),
             before_size: None,
             after_size: None,
             size_change: None,
