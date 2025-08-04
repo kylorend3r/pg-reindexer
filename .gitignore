@@ -10,6 +10,11 @@
 *.swp
 *.swo
 
+# test and debug files
+test_commands.sh
+reindexer.log
+QUICK_TEST_REFERENCE.md
+
 # Binaries
 *.exe
 *.dll
