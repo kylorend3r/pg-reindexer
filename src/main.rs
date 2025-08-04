@@ -261,7 +261,10 @@ async fn reindex_index_with_client(
     if !index_is_valid {
         logger.log(
             logging::LogLevel::Warning,
-            &format!("Index is invalid, skipping reindexing {}.{}", schema_name, index_name),
+            &format!(
+                "Index is invalid, skipping reindexing {}.{}",
+                schema_name, index_name
+            ),
         );
         // Save skipped record to logbook
         let index_data = save::IndexData {
@@ -762,12 +765,7 @@ async fn main() -> Result<()> {
 
     // Create a new logger for the final message
     let final_logger = logging::Logger::new(args.log_file.clone());
-    final_logger.log_completion_message(
-        total_indexes,
-        error_count,
-        duration,
-        args.threads,
-    );
+    final_logger.log_completion_message(total_indexes, error_count, duration, args.threads);
     final_logger.log(logging::LogLevel::Success, "Reindex process completed");
 
     Ok(())
