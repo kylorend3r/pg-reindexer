@@ -258,16 +258,35 @@ async fn reindex_index_with_client(
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
 
     // if the index is invalid, skip the reindexing.since reindexing an invalid index will cause duplicate entries in the index.
+    if !index_is_valid {
+        logger.log(
+            logging::LogLevel::Warning,
+            &format!("Index is invalid, skipping reindexing {}.{}", schema_name, index_name),
+        );
+        // Save skipped record to logbook
+        let index_data = save::IndexData {
+            schema_name: schema_name.clone(),
+            index_name: index_name.clone(),
+            index_type: index_type.clone(),
+            reindex_status: "invalid-index".to_string(),
+            before_size: None,
+            after_size: None,
+            size_change: None,
+        };
+        save::save_index_info(&client, &index_data).await?;
+
+        return Ok(());
+    }
+
     if active_vacuum
         || active_pgreindexer
         || (inactive_replication_slots && !skip_inactive_replication_slots)
         || (sync_replication_connection && !skip_sync_replication_connection)
-        || !index_is_valid
     {
         logger.log_index_skipped(
             &schema_name,
             &index_name,
-            "Active vacuum, pgreindexer, inactive replication slots, or invalid index detected",
+            "Active vacuum, pgreindexer or inactive replication slots detected",
         );
 
         // Save skipped record to logbook
