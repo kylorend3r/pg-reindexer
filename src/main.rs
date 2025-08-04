@@ -254,16 +254,20 @@ async fn reindex_index_with_client(
     let active_pgreindexer = get_running_pgreindexer(&client).await?;
     let inactive_replication_slots = get_inactive_replication_slots(&client).await?;
     let sync_replication_connection = get_sync_replication_connection(&client).await?;
+    // check if the index is invalid before reindexing
+    let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
 
+    // if the index is invalid, skip the reindexing.since reindexing an invalid index will cause duplicate entries in the index.
     if active_vacuum
         || active_pgreindexer
         || (inactive_replication_slots && !skip_inactive_replication_slots)
         || (sync_replication_connection && !skip_sync_replication_connection)
+        || !index_is_valid
     {
         logger.log_index_skipped(
             &schema_name,
             &index_name,
-            "Active vacuum, pgreindexer or inactive replication slots detected",
+            "Active vacuum, pgreindexer, inactive replication slots, or invalid index detected",
         );
 
         // Save skipped record to logbook
@@ -717,13 +721,12 @@ async fn main() -> Result<()> {
     }
 
     // Wait for all tasks to complete and collect results
-    let mut success_count = 0;
     let mut error_count = 0;
 
     for task in tasks {
         match task.await {
             Ok(Ok(_)) => {
-                success_count += 1;
+                // Task completed (could be success, skipped, or validation_failed)
             }
             Ok(Err(e)) => {
                 error_count += 1;
@@ -738,11 +741,10 @@ async fn main() -> Result<()> {
 
     let duration = start_time.elapsed();
 
-    // Create a new logger for the final summary since we need mutable access
+    // Create a new logger for the final message
     let final_logger = logging::Logger::new(args.log_file.clone());
-    final_logger.log_summary(
+    final_logger.log_completion_message(
         total_indexes,
-        success_count,
         error_count,
         duration,
         args.threads,
