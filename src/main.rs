@@ -120,8 +120,6 @@ struct SharedTableTracker {
     tables_being_reindexed: std::collections::HashMap<String, String>, // table_name -> index_name
 }
 
-
-
 // check if there is an already running pgreindexer process
 async fn get_running_pgreindexer(client: &tokio_postgres::Client) -> Result<bool> {
     let rows = client
@@ -160,8 +158,6 @@ async fn get_sync_replication_connection(client: &tokio_postgres::Client) -> Res
     Ok(sync_replication_connection_count > 0)
 }
 
-
-
 async fn check_and_handle_deadlock_risk(
     client: &tokio_postgres::Client,
     schema_name: &str,
@@ -182,63 +178,78 @@ async fn check_and_handle_deadlock_risk(
         }
     };
     let full_table_name = format!("{}.{}", schema_name, table_name);
-    
+
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Checking deadlock risk for index {}.{} on table {}", 
-            schema_name, index_name, full_table_name),
+        &format!(
+            "[DEBUG] Checking deadlock risk for index {}.{} on table {}",
+            schema_name, index_name, full_table_name
+        ),
     );
-    
+
     let mut retry_count = 0;
     const MAX_RETRIES: u32 = 12; // 1 hour max (12 * 5 minutes)
-    
+
     loop {
         // Check shared tracker for currently reindexed tables
         let current_tables = {
             let tracker = shared_tracker.lock().await;
-            tracker.tables_being_reindexed.keys().cloned().collect::<Vec<String>>()
+            tracker
+                .tables_being_reindexed
+                .keys()
+                .cloned()
+                .collect::<Vec<String>>()
         };
-        
+
         logger.log(
             logging::LogLevel::Info,
-            &format!("[DEBUG] Current tables being reindexed: {:?}", current_tables),
+            &format!(
+                "[DEBUG] Current tables being reindexed: {:?}",
+                current_tables
+            ),
         );
-        
+
         // Check if our table is already being reindexed
         if current_tables.contains(&full_table_name) {
             retry_count += 1;
             if retry_count > MAX_RETRIES {
                 logger.log(
                     logging::LogLevel::Error,
-                    &format!("[DEBUG] Maximum retries exceeded for {}.{}. Proceeding anyway.", 
-                        schema_name, index_name),
+                    &format!(
+                        "[DEBUG] Maximum retries exceeded for {}.{}. Proceeding anyway.",
+                        schema_name, index_name
+                    ),
                 );
                 break;
             }
-            
+
             logger.log(
                 logging::LogLevel::Warning,
                 &format!("[DEBUG] Potential deadlock detected! Table {} is already being reindexed. Waiting 5 minutes... (retry {}/{})", 
                     full_table_name, retry_count, MAX_RETRIES),
             );
-            
+
             // Wait 5 minutes
             tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
-            
+
             logger.log(
                 logging::LogLevel::Info,
-                &format!("[DEBUG] Retrying reindex for {}.{} after 5 minute wait", 
-                    schema_name, index_name),
+                &format!(
+                    "[DEBUG] Retrying reindex for {}.{} after 5 minute wait",
+                    schema_name, index_name
+                ),
             );
-            
+
             // Continue the loop to check the tracker again after waiting
             continue;
         }
-        
+
         // No deadlock risk, add our table to the tracker and break out of the loop
         {
             let mut tracker = shared_tracker.lock().await;
-            tracker.tables_being_reindexed.insert(full_table_name.clone(), index_name.to_string());
+            tracker
+                .tables_being_reindexed
+                .insert(full_table_name.clone(), index_name.to_string());
             logger.log(
                 logging::LogLevel::Info,
                 &format!("[DEBUG] Added table {} to reindex tracker", full_table_name),
@@ -246,12 +257,15 @@ async fn check_and_handle_deadlock_risk(
         }
         break;
     }
-    
+
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] No deadlock risk detected for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] No deadlock risk detected for {}.{}",
+            schema_name, index_name
+        ),
     );
-    
+
     Ok(())
 }
 
@@ -275,22 +289,27 @@ async fn remove_table_from_tracker(
         }
     };
     let full_table_name = format!("{}.{}", schema_name, table_name);
-    
+
     // Remove from shared tracker
     {
         let mut tracker = shared_tracker.lock().await;
         tracker.tables_being_reindexed.remove(&full_table_name);
         logger.log(
             logging::LogLevel::Info,
-            &format!("[DEBUG] Removed table {} from reindex tracker", full_table_name),
+            &format!(
+                "[DEBUG] Removed table {} from reindex tracker",
+                full_table_name
+            ),
         );
     }
-    
+
     Ok(())
 }
 
 // Perform all reindexing checks once and return results
-async fn perform_reindexing_checks(client: &tokio_postgres::Client) -> Result<ReindexingCheckResults> {
+async fn perform_reindexing_checks(
+    client: &tokio_postgres::Client,
+) -> Result<ReindexingCheckResults> {
     let active_vacuum = get_active_vacuum(client).await?;
     let active_pgreindexer = get_running_pgreindexer(client).await?;
     let inactive_replication_slots = get_inactive_replication_slots(client).await?;
@@ -373,7 +392,7 @@ async fn get_table_name_for_index(
         FROM pg_indexes 
         WHERE schemaname = $1 AND indexname = $2
     "#;
-    
+
     let rows = client
         .query(query, &[&schema_name, &index_name])
         .await
@@ -441,18 +460,27 @@ async fn reindex_index_with_client(
 
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Starting reindex process for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Starting reindex process for {}.{}",
+            schema_name, index_name
+        ),
     );
 
     // Get before size
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Getting before size for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Getting before size for {}.{}",
+            schema_name, index_name
+        ),
     );
     let before_size = get_index_size(&client, &schema_name, &index_name).await?;
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Before size for {}.{}: {} bytes", schema_name, index_name, before_size),
+        &format!(
+            "[DEBUG] Before size for {}.{}: {} bytes",
+            schema_name, index_name, before_size
+        ),
     );
 
     let reindex_sql = format!(
@@ -467,12 +495,18 @@ async fn reindex_index_with_client(
     // check if the index is invalid before reindexing
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Validating index integrity for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Validating index integrity for {}.{}",
+            schema_name, index_name
+        ),
     );
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Index {}.{} validity: {}", schema_name, index_name, index_is_valid),
+        &format!(
+            "[DEBUG] Index {}.{} validity: {}",
+            schema_name, index_name, index_is_valid
+        ),
     );
 
     // if the index is invalid, skip the reindexing.since reindexing an invalid index will cause duplicate entries in the index.
@@ -499,8 +533,6 @@ async fn reindex_index_with_client(
         return Ok(());
     }
 
-
-
     if reindexing_results.active_vacuum
         || reindexing_results.active_pgreindexer
         || (reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots)
@@ -508,7 +540,10 @@ async fn reindex_index_with_client(
     {
         logger.log(
             logging::LogLevel::Info,
-            &format!("[DEBUG] Skipping {}.{} due to reindexing conditions", schema_name, index_name),
+            &format!(
+                "[DEBUG] Skipping {}.{} due to reindexing conditions",
+                schema_name, index_name
+            ),
         );
         logger.log_index_skipped(
             &schema_name,
@@ -533,33 +568,41 @@ async fn reindex_index_with_client(
 
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Executing reindex for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Executing reindex for {}.{}",
+            schema_name, index_name
+        ),
     );
-    
+
     // Check for potential deadlock before executing reindex
-    check_and_handle_deadlock_risk(&client, &schema_name, &index_name, &shared_tracker, &logger).await?;
-    
+    check_and_handle_deadlock_risk(&client, &schema_name, &index_name, &shared_tracker, &logger)
+        .await?;
+
     let start_time = std::time::Instant::now();
     let result = client.execute(&reindex_sql, &[]).await;
     let duration = start_time.elapsed();
-    
+
     match &result {
         Ok(_) => {
             logger.log(
                 logging::LogLevel::Info,
-                &format!("[DEBUG] Reindex SQL executed successfully for {}.{} in {:?}", 
-                    schema_name, index_name, duration),
+                &format!(
+                    "[DEBUG] Reindex SQL executed successfully for {}.{} in {:?}",
+                    schema_name, index_name, duration
+                ),
             );
         }
         Err(e) => {
             logger.log(
                 logging::LogLevel::Error,
-                &format!("[DEBUG] Reindex SQL failed for {}.{} after {:?}: {}", 
-                    schema_name, index_name, duration, e),
+                &format!(
+                    "[DEBUG] Reindex SQL failed for {}.{} after {:?}: {}",
+                    schema_name, index_name, duration, e
+                ),
             );
         }
     }
-    
+
     result.context(format!(
         "Failed to reindex index {}.{}",
         schema_name, index_name
@@ -581,18 +624,27 @@ async fn reindex_index_with_client(
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Validating index integrity before saving for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Validating index integrity before saving for {}.{}",
+            schema_name, index_name
+        ),
     );
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Final validation result for {}.{}: {}", schema_name, index_name, index_is_valid),
+        &format!(
+            "[DEBUG] Final validation result for {}.{}: {}",
+            schema_name, index_name, index_is_valid
+        ),
     );
 
     if !index_is_valid {
         logger.log(
             logging::LogLevel::Info,
-            &format!("[DEBUG] Index validation failed for {}.{}", schema_name, index_name),
+            &format!(
+                "[DEBUG] Index validation failed for {}.{}",
+                schema_name, index_name
+            ),
         );
         logger.log_index_validation_failed(&schema_name, &index_name);
 
@@ -614,7 +666,10 @@ async fn reindex_index_with_client(
     // save the index info
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Saving success record for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Saving success record for {}.{}",
+            schema_name, index_name
+        ),
     );
     let index_data = save::IndexData {
         schema_name: schema_name.clone(),
@@ -629,7 +684,10 @@ async fn reindex_index_with_client(
 
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Successfully completed reindex for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Successfully completed reindex for {}.{}",
+            schema_name, index_name
+        ),
     );
     logger.log_index_success(&schema_name, &index_name);
 
@@ -1020,10 +1078,7 @@ async fn main() -> Result<()> {
     );
 
     // Perform reindexing checks once and share results
-    logger.log(
-        logging::LogLevel::Info,
-        "Performing reindexing checks...",
-    );
+    logger.log(logging::LogLevel::Info, "Performing reindexing checks...");
     let reindexing_results = perform_reindexing_checks(&client).await?;
     let reindexing_results = Arc::new(reindexing_results);
 
@@ -1076,7 +1131,7 @@ async fn main() -> Result<()> {
         let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
         let max_parallel_maintenance_workers = args.max_parallel_maintenance_workers;
         let maintenance_io_concurrency = args.maintenance_io_concurrency;
-        
+
         let task = tokio::spawn(async move {
             // Acquire permit from semaphore
             let _permit = semaphore.acquire().await.unwrap();
