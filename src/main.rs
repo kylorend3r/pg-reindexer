@@ -1,22 +1,22 @@
+use crate::checks::perform_reindexing_checks;
+use crate::connection::{create_connection_with_session_parameters, set_session_parameters};
+use crate::index_operations::{get_indexes_in_schema, reindex_index_with_client};
+use crate::types::{IndexInfo, SharedTableTracker};
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::{env, fs, path::Path, sync::Arc};
 use tokio::sync::Semaphore;
 use tokio_postgres::NoTls;
-use crate::types::{IndexInfo, SharedTableTracker};
-use crate::checks::perform_reindexing_checks;
-use crate::connection::{create_connection_with_session_parameters, set_session_parameters};
-use crate::index_operations::{get_indexes_in_schema, reindex_index_with_client};
 
+mod checks;
+mod connection;
+mod deadlock;
+mod index_operations;
 mod logging;
 mod queries;
 mod save;
 mod schema;
 mod types;
-mod checks;
-mod deadlock;
-mod connection;
-mod index_operations;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
@@ -268,7 +268,7 @@ async fn main() -> Result<()> {
         } else {
             args.max_parallel_maintenance_workers
         };
-        
+
         let total_workers = args.threads as u64 * effective_maintenance_workers;
 
         if total_workers > max_parallel_workers {
@@ -289,14 +289,13 @@ async fn main() -> Result<()> {
             logging::LogLevel::Success,
             &format!(
                 "Validation passed: {} threads × {} workers = {} total workers (max: {})",
-                args.threads,
-                effective_maintenance_workers,
-                total_workers,
-                max_parallel_workers
+                args.threads, effective_maintenance_workers, total_workers, max_parallel_workers
             ),
         );
     } else {
-        return Err(anyhow::anyhow!("Failed to get max_parallel_workers setting"));
+        return Err(anyhow::anyhow!(
+            "Failed to get max_parallel_workers setting"
+        ));
     }
 
     logger.log(
@@ -418,10 +417,7 @@ async fn main() -> Result<()> {
     );
 
     // Perform reindexing checks once and share results
-    logger.log(
-        logging::LogLevel::Info,
-        "Performing reindexing checks...",
-    );
+    logger.log(logging::LogLevel::Info, "Performing reindexing checks...");
     let reindexing_results = perform_reindexing_checks(&client).await?;
     let reindexing_results = Arc::new(reindexing_results);
 
@@ -472,7 +468,7 @@ async fn main() -> Result<()> {
         let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
         let max_parallel_maintenance_workers = args.max_parallel_maintenance_workers;
         let maintenance_io_concurrency = args.maintenance_io_concurrency;
-        
+
         let task = tokio::spawn(async move {
             // Acquire permit from semaphore
             let _permit = semaphore.acquire().await.unwrap();
@@ -533,4 +529,4 @@ async fn main() -> Result<()> {
     final_logger.log(logging::LogLevel::Success, "Reindex process completed");
 
     Ok(())
-} 
+}

@@ -1,7 +1,7 @@
+use crate::logging;
+use crate::types::SharedTableTracker;
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use crate::types::SharedTableTracker;
-use crate::logging;
 
 pub async fn get_table_name_for_index(
     client: &tokio_postgres::Client,
@@ -13,7 +13,7 @@ pub async fn get_table_name_for_index(
         FROM pg_indexes 
         WHERE schemaname = $1 AND indexname = $2
     "#;
-    
+
     let rows = client
         .query(query, &[&schema_name, &index_name])
         .await
@@ -51,63 +51,78 @@ pub async fn check_and_handle_deadlock_risk(
         }
     };
     let full_table_name = format!("{}.{}", schema_name, table_name);
-    
+
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Checking deadlock risk for index {}.{} on table {}", 
-            schema_name, index_name, full_table_name),
+        &format!(
+            "[DEBUG] Checking deadlock risk for index {}.{} on table {}",
+            schema_name, index_name, full_table_name
+        ),
     );
-    
+
     let mut retry_count = 0;
     const MAX_RETRIES: u32 = 12; // 1 hour max (12 * 5 minutes)
-    
+
     loop {
         // Check shared tracker for currently reindexed tables
         let current_tables = {
             let tracker = shared_tracker.lock().await;
-            tracker.tables_being_reindexed.keys().cloned().collect::<Vec<String>>()
+            tracker
+                .tables_being_reindexed
+                .keys()
+                .cloned()
+                .collect::<Vec<String>>()
         };
-        
+
         logger.log(
             logging::LogLevel::Info,
-            &format!("[DEBUG] Current tables being reindexed: {:?}", current_tables),
+            &format!(
+                "[DEBUG] Current tables being reindexed: {:?}",
+                current_tables
+            ),
         );
-        
+
         // Check if our table is already being reindexed
         if current_tables.contains(&full_table_name) {
             retry_count += 1;
             if retry_count > MAX_RETRIES {
                 logger.log(
                     logging::LogLevel::Error,
-                    &format!("[DEBUG] Maximum retries exceeded for {}.{}. Proceeding anyway.", 
-                        schema_name, index_name),
+                    &format!(
+                        "[DEBUG] Maximum retries exceeded for {}.{}. Proceeding anyway.",
+                        schema_name, index_name
+                    ),
                 );
                 break;
             }
-            
+
             logger.log(
                 logging::LogLevel::Warning,
                 &format!("[DEBUG] Potential deadlock detected! Table {} is already being reindexed. Waiting 5 minutes... (retry {}/{})", 
                     full_table_name, retry_count, MAX_RETRIES),
             );
-            
+
             // Wait 5 minutes
             tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
-            
+
             logger.log(
                 logging::LogLevel::Info,
-                &format!("[DEBUG] Retrying reindex for {}.{} after 5 minute wait", 
-                    schema_name, index_name),
+                &format!(
+                    "[DEBUG] Retrying reindex for {}.{} after 5 minute wait",
+                    schema_name, index_name
+                ),
             );
-            
+
             // Continue the loop to check the tracker again after waiting
             continue;
         }
-        
+
         // No deadlock risk, add our table to the tracker and break out of the loop
         {
             let mut tracker = shared_tracker.lock().await;
-            tracker.tables_being_reindexed.insert(full_table_name.clone(), index_name.to_string());
+            tracker
+                .tables_being_reindexed
+                .insert(full_table_name.clone(), index_name.to_string());
             logger.log(
                 logging::LogLevel::Info,
                 &format!("[DEBUG] Added table {} to reindex tracker", full_table_name),
@@ -115,12 +130,15 @@ pub async fn check_and_handle_deadlock_risk(
         }
         break;
     }
-    
+
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] No deadlock risk detected for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] No deadlock risk detected for {}.{}",
+            schema_name, index_name
+        ),
     );
-    
+
     Ok(())
 }
 
@@ -144,16 +162,19 @@ pub async fn remove_table_from_tracker(
         }
     };
     let full_table_name = format!("{}.{}", schema_name, table_name);
-    
+
     // Remove from shared tracker
     {
         let mut tracker = shared_tracker.lock().await;
         tracker.tables_being_reindexed.remove(&full_table_name);
         logger.log(
             logging::LogLevel::Info,
-            &format!("[DEBUG] Removed table {} from reindex tracker", full_table_name),
+            &format!(
+                "[DEBUG] Removed table {} from reindex tracker",
+                full_table_name
+            ),
         );
     }
-    
+
     Ok(())
-} 
+}

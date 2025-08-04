@@ -1,8 +1,8 @@
+use crate::deadlock::{check_and_handle_deadlock_risk, remove_table_from_tracker};
+use crate::logging;
+use crate::types::{IndexInfo, ReindexingCheckResults, SharedTableTracker};
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use crate::types::{IndexInfo, ReindexingCheckResults, SharedTableTracker};
-use crate::logging;
-use crate::deadlock::{check_and_handle_deadlock_risk, remove_table_from_tracker};
 
 pub async fn get_indexes_in_schema(
     client: &tokio_postgres::Client,
@@ -113,18 +113,27 @@ pub async fn reindex_index_with_client(
 
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Starting reindex process for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Starting reindex process for {}.{}",
+            schema_name, index_name
+        ),
     );
 
     // Get before size
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Getting before size for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Getting before size for {}.{}",
+            schema_name, index_name
+        ),
     );
     let before_size = get_index_size(&client, &schema_name, &index_name).await?;
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Before size for {}.{}: {} bytes", schema_name, index_name, before_size),
+        &format!(
+            "[DEBUG] Before size for {}.{}: {} bytes",
+            schema_name, index_name, before_size
+        ),
     );
 
     let reindex_sql = format!(
@@ -139,12 +148,18 @@ pub async fn reindex_index_with_client(
     // check if the index is invalid before reindexing
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Validating index integrity for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Validating index integrity for {}.{}",
+            schema_name, index_name
+        ),
     );
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Index {}.{} validity: {}", schema_name, index_name, index_is_valid),
+        &format!(
+            "[DEBUG] Index {}.{} validity: {}",
+            schema_name, index_name, index_is_valid
+        ),
     );
 
     // if the index is invalid, skip the reindexing.since reindexing an invalid index will cause duplicate entries in the index.
@@ -178,7 +193,10 @@ pub async fn reindex_index_with_client(
     {
         logger.log(
             logging::LogLevel::Info,
-            &format!("[DEBUG] Skipping {}.{} due to reindexing conditions", schema_name, index_name),
+            &format!(
+                "[DEBUG] Skipping {}.{} due to reindexing conditions",
+                schema_name, index_name
+            ),
         );
         logger.log_index_skipped(
             &schema_name,
@@ -203,33 +221,41 @@ pub async fn reindex_index_with_client(
 
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Executing reindex for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Executing reindex for {}.{}",
+            schema_name, index_name
+        ),
     );
-    
+
     // Check for potential deadlock before executing reindex
-    check_and_handle_deadlock_risk(&client, &schema_name, &index_name, &shared_tracker, &logger).await?;
-    
+    check_and_handle_deadlock_risk(&client, &schema_name, &index_name, &shared_tracker, &logger)
+        .await?;
+
     let start_time = std::time::Instant::now();
     let result = client.execute(&reindex_sql, &[]).await;
     let duration = start_time.elapsed();
-    
+
     match &result {
         Ok(_) => {
             logger.log(
                 logging::LogLevel::Info,
-                &format!("[DEBUG] Reindex SQL executed successfully for {}.{} in {:?}", 
-                    schema_name, index_name, duration),
+                &format!(
+                    "[DEBUG] Reindex SQL executed successfully for {}.{} in {:?}",
+                    schema_name, index_name, duration
+                ),
             );
         }
         Err(e) => {
             logger.log(
                 logging::LogLevel::Error,
-                &format!("[DEBUG] Reindex SQL failed for {}.{} after {:?}: {}", 
-                    schema_name, index_name, duration, e),
+                &format!(
+                    "[DEBUG] Reindex SQL failed for {}.{} after {:?}: {}",
+                    schema_name, index_name, duration, e
+                ),
             );
         }
     }
-    
+
     result.context(format!(
         "Failed to reindex index {}.{}",
         schema_name, index_name
@@ -251,18 +277,27 @@ pub async fn reindex_index_with_client(
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Validating index integrity before saving for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Validating index integrity before saving for {}.{}",
+            schema_name, index_name
+        ),
     );
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Final validation result for {}.{}: {}", schema_name, index_name, index_is_valid),
+        &format!(
+            "[DEBUG] Final validation result for {}.{}: {}",
+            schema_name, index_name, index_is_valid
+        ),
     );
 
     if !index_is_valid {
         logger.log(
             logging::LogLevel::Info,
-            &format!("[DEBUG] Index validation failed for {}.{}", schema_name, index_name),
+            &format!(
+                "[DEBUG] Index validation failed for {}.{}",
+                schema_name, index_name
+            ),
         );
         logger.log_index_validation_failed(&schema_name, &index_name);
 
@@ -284,7 +319,10 @@ pub async fn reindex_index_with_client(
     // save the index info
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Saving success record for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Saving success record for {}.{}",
+            schema_name, index_name
+        ),
     );
     let index_data = crate::save::IndexData {
         schema_name: schema_name.clone(),
@@ -299,7 +337,10 @@ pub async fn reindex_index_with_client(
 
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Successfully completed reindex for {}.{}", schema_name, index_name),
+        &format!(
+            "[DEBUG] Successfully completed reindex for {}.{}",
+            schema_name, index_name
+        ),
     );
     logger.log_index_success(&schema_name, &index_name);
 
@@ -307,4 +348,4 @@ pub async fn reindex_index_with_client(
     remove_table_from_tracker(&client, &schema_name, &index_name, &shared_tracker, &logger).await?;
 
     Ok(())
-} 
+}

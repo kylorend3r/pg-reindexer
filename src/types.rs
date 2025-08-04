@@ -1,5 +1,3 @@
-
-
 #[derive(Debug)]
 pub struct IndexInfo {
     pub schema_name: String,
@@ -26,4 +24,4 @@ impl SharedTableTracker {
             tables_being_reindexed: std::collections::HashMap::new(),
         }
     }
-} 
+}

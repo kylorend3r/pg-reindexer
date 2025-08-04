@@ -1,6 +1,6 @@
+use crate::types::ReindexingCheckResults;
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
-use crate::types::ReindexingCheckResults;
 
 // check if there is an already running pgreindexer process
 pub async fn get_running_pgreindexer(client: &Client) -> Result<bool> {
@@ -53,4 +53,4 @@ pub async fn perform_reindexing_checks(client: &Client) -> Result<ReindexingChec
         inactive_replication_slots,
         sync_replication_connection,
     })
-} 
+}
