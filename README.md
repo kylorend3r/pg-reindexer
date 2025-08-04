@@ -4,6 +4,8 @@
 
 A high-performance, production-ready PostgreSQL index maintenance tool written in Rust. Safely reindex your PostgreSQL indexes with intelligent resource management and comprehensive logging.
 
+![Reindexer](assets/reindex.gif)
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
