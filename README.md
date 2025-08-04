@@ -1,95 +1,138 @@
 [![Pg-Reindexer CI](https://github.com/kylorend3r/pg-reindexer/actions/workflows/rust.yml/badge.svg)](https://github.com/kylorend3r/pg-reindexer/actions/workflows/rust.yml)
+[![Pg-Reindexer CI](https://github.com/kylorend3r/pg-reindexer/actions/workflows/rust.yml/badge.svg)](https://github.com/kylorend3r/pg-reindexer/actions/workflows/rust.yml)
 
 # PostgreSQL Reindexer
 
-A high-performance, production-ready PostgreSQL index maintenance tool written in Rust. This tool provides safe, efficient, and controlled reindexing operations with intelligent resource management and comprehensive logging.
+A high-performance, production-ready PostgreSQL index maintenance tool written in Rust. Safely reindex your PostgreSQL indexes with intelligent resource management and comprehensive logging.
 
 ## Table of Contents
 
-- [Purpose and Definition](#purpose-and-definition)
-- [Installation](#installation)
-  - [Prerequisites](#prerequisites)
-  - [Build from Source](#build-from-source)
-  - [Download Binary](#download-binary)
+- [Quick Start](#quick-start)
+  - [Installation](#installation)
+  - [Basic Usage](#basic-usage)
+- [Usage Examples](#usage-examples)
+  - [Basic Operations](#-basic-operations)
+  - [Thread Count Variations](#-thread-count-variations)
+  - [Memory and Performance Settings](#-memory-and-performance-settings)
+  - [Size Filtering](#-size-filtering)
+  - [Production Scenarios](#-production-scenarios)
+- [Environment Variables](#environment-variables)
 - [Command Line Interface](#command-line-interface)
-- [Usage](#usage)
-  - [Environment Variables](#environment-variables)
-  - [Basic Operations](#basic-operations)
-- [Production System Protection](#production-system-protection)
+- [Key Features](#key-features)
 - [Database Schema](#database-schema)
 - [License](#license)
 - [Support](#support)
 
-## Purpose and Definition
+## Quick Start
 
-PostgreSQL's native `REINDEX` command is powerful but lacks the orchestration capabilities needed for production environments. This Rust-based tool bridges that gap by providing:
-
-- **Safe Concurrent Operations and Resource Management**: Thread-safe reindexing with built-in conflict detection and configurable threading for optimal performance vs. resource usage
-- **Replication Safety**: Advanced checks for replication slots and sync connections
-- **Production Safety**: Built-in safeguards against maintenance operations (VACUUM etc..) and previous active reindexer sessions.
-- **Granular Control**: Target specific schemas or tables to create a different indexing strategies increasing flexibility.
-- **Comprehensive Logging**: Track all reindex operations with detailed before/after metrics
-
-### Key Features
-
-#### 🎯 **Granular Control for Maintenance Categorization**
-- **Schema-level operations**: Reindex all indexes in a specific schema for comprehensive maintenance
-- **Table-level precision**: Target specific tables for focused maintenance cycles
-- **Categorized maintenance**: Organize maintenance processes by business logic (e.g., user tables, order tables, reporting tables)
-
-#### 🔧 **Smart Index Selection**
-- **B-tree focus**: Optimized for the most common index type in PostgreSQL
-- **Constraint awareness**: Automatically skips primary keys and unique constraints (which can't use CONCURRENTLY)
-- **Size filtering**: Exclude oversized indexes that could impact system performance
-- **Safe operations**: Only processes indexes that can be safely reindexed concurrently
-
-#### ⚡ **Performance Optimization Through Threading**
-- **Configurable concurrency**: Control how fast you want to complete tasks (1-16+ threads)
-- **Resource management**: Balance speed vs. system resource consumption
-- **Adaptive processing**: Scale up for maintenance windows, scale down for production hours
-- **Progress tracking**: Real-time monitoring of concurrent operations
-
-#### 🛡️ **Built for Safety and Reliability**
-- **Non-blocking operations**: Uses `REINDEX INDEX CONCURRENTLY` to minimize downtime
-- **Conflict detection**: Automatically skips operations when vacuums or other processes are active
-- **Replication safety**: Built-in checks for inactive replication slots and sync replication connections
-- **Production controls**: Configurable safety overrides for maintenance windows and emergency operations
-- **Index validation**: Automatic integrity checks after each reindex operation
-- **Dry run mode**: Preview operations before execution
-- **Resource protection**: Configurable maintenance work memory and parallel worker limits to protect production systems
-
-## Installation
-
-### Prerequisites
-
-- Rust 1.70+ (for building from source)
-- PostgreSQL 12+ (for concurrent reindex support)
-- Access to PostgreSQL database
-
-### Build from Source
+### Installation
 
 ```bash
-# Clone the repository
+# Build from source
 git clone <repository-url>
 cd pg-reindexer
-
-# Build the project
 cargo build --release
 
-# The binary will be available at target/release/pg-reindexer
+# Or download binary
+wget https://github.com/your-org/pg-reindexer/releases/latest/download/pg-reindexer-x86_64-unknown-linux-gnu
+chmod +x pg-reindexer-x86_64-unknown-linux-gnu
 ```
 
-### Download Binary
+### Basic Usage
 
 ```bash
-# Download the latest release binary
-wget https://github.com/your-org/pg-reindexer/releases/latest/download/pg-reindexer-x86_64-unknown-linux-gnu
+# See what would be reindexed (always test first!)
+pg-reindexer --schema public --dry-run
 
-# Make it executable
-chmod +x pg-reindexer-x86_64-unknown-linux-gnu
+# Reindex all indexes in a schema
+pg-reindexer --schema public --verbose
 
-# Move to a directory in your PATH (optional)
-sudo mv pg-reindexer-x86_64-unknown-linux-gnu /usr/local/bin/pg-reindexer
+# Reindex indexes for a specific table
+pg-reindexer --schema public --table users --verbose
+
+# High-performance reindexing
+pg-reindexer --schema public --threads 8 --verbose
+```
+
+## Usage Examples
+
+### 🚀 **Basic Operations**
+
+```bash
+# Dry run (always test first!)
+pg-reindexer --schema public --dry-run
+
+# Basic operation with verbose output
+pg-reindexer --schema public --verbose
+
+# Specific table reindexing
+pg-reindexer --schema public --table users --verbose
+```
+
+### 🔧 **Thread Count Variations**
+
+```bash
+# Production safe (1 thread)
+pg-reindexer --schema public --threads 1 --verbose
+
+# High performance (8 threads)
+pg-reindexer --schema public --threads 8 --verbose
+
+# Maximum threads (32)
+pg-reindexer --schema public --threads 32 --verbose
+```
+
+### 💾 **Memory and Performance Settings**
+
+```bash
+# Conservative settings
+pg-reindexer --schema public --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1
+
+# High performance settings
+pg-reindexer --schema public --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4
+
+# Use PostgreSQL defaults
+pg-reindexer --schema public --max-parallel-maintenance-workers 0
+
+# High IO concurrency
+pg-reindexer --schema public --maintenance-io-concurrency 256
+```
+
+### 📊 **Size Filtering**
+
+```bash
+# Only medium indexes (max 10GB)
+pg-reindexer --schema public --max-size-gb 10
+
+# Large indexes only (min 100GB)
+pg-reindexer --schema public --max-size-gb 100
+```
+
+### 🛡️ **Production Scenarios**
+
+```bash
+# Production hours (minimal impact)
+pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1
+
+# Maintenance window (high performance)
+pg-reindexer --schema public --threads 8 --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4 --maintenance-io-concurrency 256
+
+# Emergency operation (maximum safety)
+pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1 --skip-inactive-replication-slots --skip-sync-replication-connection
+```
+
+
+## Environment Variables
+
+```bash
+export PG_HOST=localhost
+export PG_PORT=5432
+export PG_DATABASE=postgres
+export PG_USER=postgres
+export PG_PASSWORD=mypassword
+
+# Then run without connection parameters
+pg-reindexer --schema public --verbose
 ```
 
 ## Command Line Interface
@@ -108,83 +151,48 @@ Options:
   -s, --schema <SCHEMA>                                 Schema name to reindex (required)
   -t, --table <TABLE>                                   Table name to reindex (optional - if not provided, reindexes all indexes in schema)
   -f, --dry-run                                         Dry run - show what would be reindexed without actually doing it
-  -n, --threads <THREADS>                               Number of concurrent threads for reindexing (default: 2) [default: 2]
+  -n, --threads <THREADS>                               Number of concurrent threads for reindexing (default: 2, max: 32) [default: 2]
   -v, --verbose                                         Verbose output
   -i, --skip-inactive-replication-slots                 Skip inactive replication slots check
   -r, --skip-sync-replication-connection                Skip sync replication connection check
   -m, --max-size-gb <MAX_SIZE_GB>                      Maximum index size in GB. Indexes larger than this will be excluded from reindexing [default: 1024]
   -w, --maintenance-work-mem-gb <MAINTENANCE_WORK_MEM_GB>  Maximum maintenance work mem in GB [default: 1]
-  -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety [default: 2]
+  -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2) [default: 2]
+  -c, --maintenance-io-concurrency <MAINTENANCE_IO_CONCURRENCY>  Maintenance IO concurrency. Controls the number of concurrent I/O operations during maintenance operations [default: 10]
   -l, --log-file <LOG_FILE>                             Log file path (default: reindexer.log in current directory) [default: reindexer.log]
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
 
-## Usage
+## Key Features
 
-### Environment Variables
+### 🎯 **Granular Maintenance Control**
+- **Schema-level reindexing**: Reindex all indexes in a specific schema for comprehensive maintenance
+- **Table-level precision**: Target specific tables for focused maintenance cycles
+- **Flexible scheduling**: Create different maintenance strategies for different schemas/tables
+- **B-tree focus**: Optimized for the most common index type in PostgreSQL
+- **Constraint awareness**: Automatically skips primary keys and unique constraints (which can't use CONCURRENTLY)
 
-Configure the tool using environment variables for seamless integration:
+### ⚡ **Concurrent Operations with Safety**
+- **Non-blocking reindexing**: Uses `REINDEX INDEX CONCURRENTLY` to minimize downtime
+- **Smart threading**: Multiple threads for different tables, but protects same table from concurrent operations
+- **Deadlock prevention**: Intelligent concurrent operations that allow multiple tables but protect same table from simultaneous reindex operations
+- **Configurable concurrency**: 1-32 threads with automatic validation against PostgreSQL limits
 
-```bash
-export PG_HOST=localhost
-export PG_PORT=5432
-export PG_DATABASE=myapp
-export PG_USER=postgres
-export PG_PASSWORD=mypassword
-```
+### 🛡️ **Built-in Safety Checks**
+- **Active process detection**: Automatically skips reindexing when vacuums or other maintenance processes are active
+- **Replication safety**: Checks for inactive replication slots to prevent WAL size issues
+- **Sync replica protection**: Stops operations when sync replication is detected to prevent primary unresponsiveness
+- **Configurable overrides**: Use CLI arguments to manage safety check behavior
+- **Thread validation**: Automatic validation of thread count and PostgreSQL worker limits
 
-### Basic Operations
-
-#### Schema-Wide Reindexing
-```bash
-./pg-reindexer --schema public --verbose
-```
-
-#### Table-Specific Reindexing
-```bash
-./pg-reindexer --schema public --table orders --verbose
-```
-
-#### Preview Operations (Dry Run)
-```bash
-./pg-reindexer --schema public --dry-run
-```
-
-#### High-Performance Reindexing
-```bash
-./pg-reindexer --schema public --threads 8 --verbose
-```
-
-
-## Production System Protection
-
-The tool includes advanced resource management features to protect production systems while optimizing performance:
-
-### Memory Management (`maintenance_work_mem`)
-
-The `maintenance_work_mem` parameter is critical for index operation performance:
-
-- **Performance Impact**: Larger values enable faster index operations by providing more memory for sorting and building operations
-- **Memory Usage**: Each parallel worker uses this amount of memory, so total usage = `maintenance_work_mem × max_parallel_maintenance_workers`
-- **Production Safety**: Default of 1 GB is conservative to prevent memory exhaustion
-- **Optimization Strategy**: 
-  - Small indexes (< 1GB): 1-2 GB is sufficient
-  - Large indexes (> 10GB): 4-8 GB can significantly improve performance
-  - Monitor system memory usage during operations
-
-### Parallel Worker Management (`max_parallel_maintenance_workers`)
-
-The `max_parallel_maintenance_workers` parameter controls parallel index operations:
-
-- **Safety Validation**: Automatically checks against system `max_parallel_workers` setting
-- **Resource Protection**: Enforces limit of `max_parallel_workers/2` to prevent resource exhaustion
-- **Performance Scaling**: Enables parallel index operations for improved throughput
-- **Production Guidelines**:
-  - **Production Hours**: 1-2 workers (minimal impact)
-  - **Maintenance Windows**: 4-8 workers (high performance)
-  - **Emergency Operations**: 1 worker (maximum safety)
-
+### 🔧 **Performance Optimization**
+- **Configurable GUCs**: Set PostgreSQL parameters for optimal performance:
+  - `maintenance_work_mem`: Control memory allocation for index operations
+  - `maintenance_io_concurrency`: Manage concurrent I/O operations
+  - `max_parallel_maintenance_workers`: Control parallel worker count
+- **Resource management**: Balance performance vs. system resource consumption
+- **Smart defaults**: Uses PostgreSQL defaults when parameters are set to 0
 
 ## Database Schema
 
