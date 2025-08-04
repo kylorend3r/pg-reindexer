@@ -86,6 +86,15 @@ struct Args {
     )]
     max_parallel_maintenance_workers: u64,
 
+    /// Maintenance IO concurrency (default: 10, max: 512)
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "10",
+        help = "Maintenance IO concurrency. Controls the number of concurrent I/O operations during maintenance operations"
+    )]
+    maintenance_io_concurrency: u64,
+
     /// Log file path (default: reindexer.log in current directory)
     #[arg(short = 'l', long, default_value = "reindexer.log")]
     log_file: String,
@@ -371,6 +380,7 @@ async fn set_session_parameters(
     client: &tokio_postgres::Client,
     maintenance_work_mem_gb: u64,
     max_parallel_maintenance_workers: u64,
+    maintenance_io_concurrency: u64,
 ) -> Result<()> {
     // This function can be improved to set session parameters from the cli arguments.
     // For now set the session parameters to 0.
@@ -447,6 +457,27 @@ async fn set_session_parameters(
             "Failed to get max_parallel_workers setting"
         ));
     }
+
+    // Validate maintenance_io_concurrency (max 512)
+    if maintenance_io_concurrency > 512 {
+        return Err(anyhow::anyhow!(
+            "maintenance_io_concurrency ({}) must be 512 or less",
+            maintenance_io_concurrency
+        ));
+    }
+
+    // Set maintenance_io_concurrency
+    client
+        .execute(
+            format!(
+                "SET maintenance_io_concurrency TO '{}';",
+                maintenance_io_concurrency
+            )
+            .as_str(),
+            &[],
+        )
+        .await
+        .context("Set the maintenance_io_concurrency.")?;
 
     Ok(())
 }
@@ -663,11 +694,13 @@ async fn main() -> Result<()> {
         &client,
         args.maintenance_work_mem_gb,
         args.max_parallel_maintenance_workers,
+        args.maintenance_io_concurrency,
     )
     .await?;
     logger.log_session_parameters(
         args.maintenance_work_mem_gb,
         args.max_parallel_maintenance_workers,
+        args.maintenance_io_concurrency,
     );
 
     logger.log(

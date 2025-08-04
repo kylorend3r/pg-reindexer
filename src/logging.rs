@@ -160,6 +160,7 @@ impl Logger {
         &self,
         maintenance_work_mem_gb: u64,
         max_parallel_maintenance_workers: u64,
+        maintenance_io_concurrency: u64,
     ) {
         self.log(
             LogLevel::Info,
@@ -171,6 +172,10 @@ impl Logger {
                 "Max parallel maintenance workers: {}",
                 max_parallel_maintenance_workers
             ),
+        );
+        self.log(
+            LogLevel::Info,
+            &format!("Maintenance IO concurrency: {}", maintenance_io_concurrency),
         );
     }
 }
