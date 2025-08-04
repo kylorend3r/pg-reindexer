@@ -98,38 +98,33 @@ impl Logger {
         );
     }
 
-    pub fn log_summary(
+    pub fn log_completion_message(
         &self,
         total: usize,
-        successful: usize,
         failed: usize,
         duration: std::time::Duration,
         threads: usize,
     ) {
-        self.log(LogLevel::Info, "=== REINDEX SUMMARY ===");
+        self.log(LogLevel::Info, "=== REINDEX COMPLETED ===");
         self.log(
             LogLevel::Info,
             &format!("Total indexes processed: {}", total),
         );
-        self.log(
-            LogLevel::Success,
-            &format!("Successfully reindexed: {}", successful),
-        );
-        self.log(LogLevel::Error, &format!("Failed: {}", failed));
+        if failed > 0 {
+            self.log(LogLevel::Error, &format!("Failed: {}", failed));
+        }
         self.log(LogLevel::Info, &format!("Duration: {:.2?}", duration));
         self.log(
             LogLevel::Info,
             &format!("Concurrent threads used: {}", threads),
         );
-
-        let success_rate = if total > 0 {
-            (successful as f64 / total as f64) * 100.0
-        } else {
-            0.0
-        };
         self.log(
             LogLevel::Info,
-            &format!("Success rate: {:.1}%", success_rate),
+            "For detailed results, review the reindex_logbook table:",
+        );
+        self.log(
+            LogLevel::Info,
+            "SELECT * FROM reindexer.reindex_logbook WHERE reindex_time >= NOW() - INTERVAL '1 hour' ORDER BY reindex_time DESC;",
         );
     }
 
@@ -165,6 +160,7 @@ impl Logger {
         &self,
         maintenance_work_mem_gb: u64,
         max_parallel_maintenance_workers: u64,
+        maintenance_io_concurrency: u64,
     ) {
         self.log(
             LogLevel::Info,
@@ -176,6 +172,10 @@ impl Logger {
                 "Max parallel maintenance workers: {}",
                 max_parallel_maintenance_workers
             ),
+        );
+        self.log(
+            LogLevel::Info,
+            &format!("Maintenance IO concurrency: {}", maintenance_io_concurrency),
         );
     }
 }
