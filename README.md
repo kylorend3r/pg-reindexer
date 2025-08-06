@@ -109,6 +109,13 @@ pg-reindexer --schema public --max-size-gb 10
 pg-reindexer --schema public --max-size-gb 100
 ```
 
+### 🎯 **Bloat-based Reindexing**
+
+```bash
+# Only reindex indexes with bloat ratio >= 15%
+pg-reindexer --schema public --reindex-only-bloated 15
+```
+
 ### 🛡️ **Production Scenarios**
 
 ```bash
@@ -161,6 +168,7 @@ Options:
   -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2) [default: 2]
   -c, --maintenance-io-concurrency <MAINTENANCE_IO_CONCURRENCY>  Maintenance IO concurrency. Controls the number of concurrent I/O operations during maintenance operations [default: 10]
   -l, --log-file <LOG_FILE>                             Log file path (default: reindexer.log in current directory) [default: reindexer.log]
+      --reindex-only-bloated <PERCENTAGE>               Reindex only indexes with bloat ratio above this percentage (0-100). If not specified, all indexes will be reindexed
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
@@ -186,6 +194,12 @@ Options:
 - **Sync replica protection**: Stops operations when sync replication is detected to prevent primary unresponsiveness
 - **Configurable overrides**: Use CLI arguments to manage safety check behavior
 - **Thread validation**: Automatic validation of thread count and PostgreSQL worker limits
+
+### 📊 **Intelligent Bloat Detection**
+- **Bloat ratio calculation**: Uses PostgreSQL's internal statistics to calculate index bloat percentage
+- **Threshold-based filtering**: Only reindex indexes that exceed the specified bloat threshold
+- **Efficient maintenance**: Focus resources on indexes that actually need reindexing
+- **Configurable sensitivity**: Set bloat threshold from 0-100% to match your maintenance strategy
 
 ### 🔧 **Performance Optimization**
 - **Configurable GUCs**: Set PostgreSQL parameters for optimal performance:
@@ -219,6 +233,8 @@ CREATE TABLE reindexer.reindex_logbook (
 - `success`: Index was successfully reindexed and validated
 - `validation_failed`: Index reindexing completed but validation failed
 - `skipped`: Index was skipped due to active vacuum or other pgreindexer processes
+- `below_bloat_threshold`: Index was skipped because its bloat ratio was below the specified threshold
+- `invalid_index`: Index was skipped because it was found to be invalid
 
 ## License
 

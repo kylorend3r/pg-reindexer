@@ -89,6 +89,26 @@ pub async fn validate_index_integrity(
     }
 }
 
+pub async fn get_index_bloat_ratio(
+    client: &tokio_postgres::Client,
+    index_name: &str,
+) -> Result<f64> {
+    let rows = client
+        .query(crate::queries::GET_INDEX_BLOAT_RATIO, &[&index_name])
+        .await
+        .context("Failed to query index bloat ratio")?;
+
+    if let Some(row) = rows.first() {
+        // Handle numeric type conversion by getting as string and parsing
+        let bloat_percentage_str: String = row.get(0);
+        let bloat_percentage_f64 = bloat_percentage_str.parse::<f64>().unwrap_or(0.0);
+        Ok(bloat_percentage_f64)
+    } else {
+        // If no rows returned, assume no bloat
+        Ok(0.0)
+    }
+}
+
 pub async fn reindex_index_with_client(
     client: Arc<tokio_postgres::Client>,
     schema_name: String,
@@ -102,6 +122,7 @@ pub async fn reindex_index_with_client(
     reindexing_results: Arc<ReindexingCheckResults>,
     shared_tracker: Arc<tokio::sync::Mutex<SharedTableTracker>>,
     logger: Arc<logging::Logger>,
+    bloat_threshold: Option<u8>,
 ) -> Result<()> {
     logger.log_index_start(
         index_num,
@@ -114,7 +135,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Starting reindex process for {}.{}",
+            "[DEBUG] Starting pre-reindex checks for {}.{}",
             schema_name, index_name
         ),
     );
@@ -139,10 +160,6 @@ pub async fn reindex_index_with_client(
     let reindex_sql = format!(
         "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
         schema_name, index_name
-    );
-    logger.log(
-        logging::LogLevel::Info,
-        &format!("[DEBUG] SQL to execute: {}", reindex_sql),
     );
 
     // check if the index is invalid before reindexing
@@ -186,6 +203,71 @@ pub async fn reindex_index_with_client(
         return Ok(());
     }
 
+    // Check bloat ratio if threshold is specified
+    if let Some(threshold) = bloat_threshold {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!(
+                "[DEBUG] Checking bloat ratio for {}.{} (threshold: {}%)",
+                schema_name, index_name, threshold
+            ),
+        );
+        
+        let bloat_ratio = get_index_bloat_ratio(&client, &index_name).await?;
+        logger.log(
+            logging::LogLevel::Info,
+            &format!(
+                "[DEBUG] Bloat ratio for {}.{}: {}%",
+                schema_name, index_name, bloat_ratio
+            ),
+        );
+
+        if bloat_ratio < threshold as f64 {
+            logger.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "Index bloat ratio ({}%) is below threshold ({}%), skipping reindexing {}.{}",
+                    bloat_ratio, threshold, schema_name, index_name
+                ),
+            );
+            logger.log_index_skipped(
+                &schema_name,
+                &index_name,
+                &format!("Bloat ratio ({}%) below threshold ({}%)", bloat_ratio, threshold),
+            );
+            // Save skipped record to logbook
+            let index_data = crate::save::IndexData {
+                schema_name: schema_name.clone(),
+                index_name: index_name.clone(),
+                index_type: index_type.clone(),
+                reindex_status: "below_bloat_threshold".to_string(),
+                before_size: None,
+                after_size: None,
+                size_change: None,
+            };
+            crate::save::save_index_info(&client, &index_data).await?;
+
+            return Ok(());
+        } else {
+            logger.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "[DEBUG] Bloat ratio ({}%) is above threshold ({}%), proceeding with checks",
+                    bloat_ratio, threshold
+                ),
+            );
+        }
+    }
+
+    // Check reindexing conditions
+    logger.log(
+        logging::LogLevel::Info,
+        &format!(
+            "[DEBUG] Checking reindexing conditions for {}.{}",
+            schema_name, index_name
+        ),
+    );
+
     if reindexing_results.active_vacuum
         || reindexing_results.active_pgreindexer
         || (reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots)
@@ -222,14 +304,29 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Executing reindex for {}.{}",
+            "[DEBUG] All pre-reindex checks passed for {}.{}",
             schema_name, index_name
         ),
     );
 
     // Check for potential deadlock before executing reindex
+    logger.log(
+        logging::LogLevel::Info,
+        &format!(
+            "[DEBUG] Checking deadlock risk for {}.{}",
+            schema_name, index_name
+        ),
+    );
     check_and_handle_deadlock_risk(&client, &schema_name, &index_name, &shared_tracker, &logger)
         .await?;
+
+    logger.log(
+        logging::LogLevel::Info,
+        &format!(
+            "[DEBUG] Starting reindex operation for {}.{}",
+            schema_name, index_name
+        ),
+    );
 
     let start_time = std::time::Instant::now();
     let result = client.execute(&reindex_sql, &[]).await;
