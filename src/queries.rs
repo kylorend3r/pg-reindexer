@@ -102,3 +102,36 @@ pub const SET_APPLICATION_NAME: &str = "SET application_name TO 'reindexer'";
 
 // Get max_parallel_workers setting
 pub const GET_MAX_PARALLEL_WORKERS: &str = "SHOW max_parallel_workers";
+
+// Get bloat ratio for a specific index
+pub const GET_INDEX_BLOAT_RATIO: &str = r#"
+    WITH specific_index AS (
+        SELECT 
+            idx.schemaname,
+            idx.tablename,
+            idx.indexname,
+            idx.indexdef,
+            pg_relation_size(idx.indexname::regclass) as index_size_bytes,
+            pg_relation_size(idx.tablename::regclass) as table_size_bytes,
+            idx_cls.relpages as index_pages,
+            tbl_cls.relpages as table_pages,
+            idx_cls.reltuples as index_tuples,
+            tbl_cls.reltuples as table_tuples,
+            am.amname as index_type
+        FROM pg_indexes idx
+        JOIN pg_class idx_cls ON idx.indexname = idx_cls.relname
+        JOIN pg_class tbl_cls ON idx.tablename = tbl_cls.relname
+        JOIN pg_am am ON idx_cls.relam = am.oid
+        WHERE idx.indexname = $1
+    )
+    SELECT 
+        CASE 
+            WHEN table_pages > 0 AND index_pages > 0 THEN
+                ROUND(
+                    (((index_pages::numeric / table_pages::numeric) * 100) - 
+                     ((index_size_bytes::numeric / table_size_bytes::numeric) * 100)), 2
+                )::text
+            ELSE '0'
+        END as bloat_percentage
+    FROM specific_index;
+"#;

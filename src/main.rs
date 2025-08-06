@@ -108,6 +108,14 @@ struct Args {
     /// Log file path (default: reindexer.log in current directory)
     #[arg(short = 'l', long, default_value = "reindexer.log")]
     log_file: String,
+
+    /// Reindex only indexes with bloat ratio above this percentage (0-100)
+    #[arg(
+        long,
+        value_name = "PERCENTAGE",
+        help = "Reindex only indexes with bloat ratio above this percentage (0-100). If not specified, all indexes will be reindexed."
+    )]
+    reindex_only_bloated: Option<u8>,
 }
 
 fn get_password_from_pgpass(
@@ -173,6 +181,16 @@ fn get_password_from_pgpass(
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    // Validate bloat threshold if provided
+    if let Some(threshold) = args.reindex_only_bloated {
+        if threshold > 100 {
+            return Err(anyhow::anyhow!(
+                "Bloat threshold ({}) must be between 0 and 100",
+                threshold
+            ));
+        }
+    }
 
     // Initialize logger
     let logger = logging::Logger::new(args.log_file.clone());
@@ -376,6 +394,13 @@ async fn main() -> Result<()> {
         &format!("Found {} indexes to process", indexes.len()),
     );
 
+    if let Some(threshold) = args.reindex_only_bloated {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Bloat threshold enabled: only reindexing indexes with bloat ratio >= {}%", threshold),
+        );
+    }
+
     logger.log(
         logging::LogLevel::Info,
         "Setting up session parameters and schema",
@@ -468,6 +493,7 @@ async fn main() -> Result<()> {
         let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
         let max_parallel_maintenance_workers = args.max_parallel_maintenance_workers;
         let maintenance_io_concurrency = args.maintenance_io_concurrency;
+        let bloat_threshold = args.reindex_only_bloated;
 
         let task = tokio::spawn(async move {
             // Acquire permit from semaphore
@@ -495,6 +521,7 @@ async fn main() -> Result<()> {
                 reindexing_results,
                 shared_tracker,
                 logger,
+                bloat_threshold,
             )
             .await
         });
