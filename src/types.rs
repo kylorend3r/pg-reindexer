@@ -13,6 +13,27 @@ pub struct ReindexingCheckResults {
     pub sync_replication_connection: bool,
 }
 
+#[derive(Debug, Clone)]
+pub enum ReindexStatus {
+    InvalidIndex,
+    BelowBloatThreshold,
+    Skipped,
+    ValidationFailed,
+    Success,
+}
+
+impl std::fmt::Display for ReindexStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReindexStatus::InvalidIndex => write!(f, "invalid_index"),
+            ReindexStatus::BelowBloatThreshold => write!(f, "below_bloat_threshold"),
+            ReindexStatus::Skipped => write!(f, "skipped"),
+            ReindexStatus::ValidationFailed => write!(f, "validation_failed"),
+            ReindexStatus::Success => write!(f, "success"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SharedTableTracker {
     pub tables_being_reindexed: std::collections::HashMap<String, String>, // table_name -> index_name
