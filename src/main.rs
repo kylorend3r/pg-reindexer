@@ -22,51 +22,75 @@ mod types;
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
 struct Args {
     /// PostgreSQL host (can also be set via PG_HOST environment variable)
-    #[arg(short = 'H', long)]
+    #[arg(short = 'H', long, help = "Host to connect to PostgreSQL")]
     host: Option<String>,
 
     /// PostgreSQL port (can also be set via PG_PORT environment variable)
-    #[arg(short, long)]
+    #[arg(short, long, help = "Port to connect to PostgreSQL")]
     port: Option<u16>,
 
     /// Database name (can also be set via PG_DATABASE environment variable)
-    #[arg(short, long)]
+    #[arg(short, long, help = "Database name to connect to")]
     database: Option<String>,
 
     /// Username (can also be set via PG_USER environment variable)
-    #[arg(short = 'U', long)]
+    #[arg(short = 'U', long, help = "Username for the PostgreSQL user")]
     username: Option<String>,
 
     /// Password (can also be set via PG_PASSWORD environment variable)
-    #[arg(short = 'P', long)]
+    #[arg(short = 'P', long, help = "Password for the PostgreSQL user")]
     password: Option<String>,
 
     /// Schema name to reindex (required)
-    #[arg(short = 's', long)]
+    #[arg(short = 's', long, help = "Schema name to reindex")]
     schema: String,
 
     /// Table name to reindex (optional - if not provided, reindexes all indexes in schema)
-    #[arg(short = 't', long)]
+    #[arg(short = 't', long, help = "Table name to reindex")]
     table: Option<String>,
 
     /// Dry run - show what would be reindexed without actually doing it
-    #[arg(short = 'f', long, default_value = "false")]
+    #[arg(
+        short = 'f', 
+        long, 
+        default_value = "false", 
+        help = "Dry run - show what would be reindexed without actually doing it"
+    )]
     dry_run: bool,
 
     /// Number of concurrent threads for reindexing (default: 2, max: 32)
-    #[arg(short = 'n', long, default_value = "2")]
+    #[arg(
+        short = 'n', 
+        long, 
+        default_value = "2", 
+        help = "Number of concurrent threads for reindexing. If set to 1, it will reindex indexes one by one to avoid conflicts."
+    )]
     threads: usize,
 
     /// Verbose output
-    #[arg(short = 'v', long, default_value = "false")]
+    #[arg(
+        short = 'v', 
+        long, 
+        default_value = "false", 
+        help = "Verbose output. If set to true, it will print more detailed information about the reindexing process."
+    )]
     verbose: bool,
 
     /// Skip inactive replication slots check
-    #[arg(short = 'i', long, default_value = "false")]
+    #[arg(
+        short = 'i', 
+        long, 
+        default_value = "false",
+        help = "Skip checking inactive replication slots(pg_replication_slots). If there is an inactive replication slot it may cause WAL files to be kept in the WAL directory or slot can miss some WAL files due to limitation if exists."
+    )]
     skip_inactive_replication_slots: bool,
 
     /// Skip sync replication connection check
-    #[arg(short = 'r', long, default_value = "false")]
+    #[arg(
+        short = 'r', 
+        long, 
+        default_value = "false", 
+        help = "Skip checking sync replication connection/slot status. If there is a sync replication instance, it will be skipped.")]
     skip_sync_replication_connection: bool,
 
     /// Maximum index size in GB (default: 1024 GB = 1TB)
@@ -106,7 +130,12 @@ struct Args {
     maintenance_io_concurrency: u64,
 
     /// Log file path (default: reindexer.log in current directory)
-    #[arg(short = 'l', long, default_value = "reindexer.log")]
+    #[arg(
+        short = 'l', 
+        long, 
+        default_value = "reindexer.log", 
+        help = "Log file path. If not specified it will use the current directory with the name reindexer.log"
+    )]
     log_file: String,
 
     /// Reindex only indexes with bloat ratio above this percentage (0-100)
