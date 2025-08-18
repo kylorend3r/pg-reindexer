@@ -3,6 +3,10 @@ use crate::types::SharedTableTracker;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
+// Deadlock detection constants
+const MAX_RETRIES: u32 = 12; // 1 hour max (12 * 5 minutes)
+const DEADLOCK_WAIT_SECONDS: u64 = 300; // 5 minutes wait when deadlock detected
+
 pub async fn get_table_name_for_index(
     client: &tokio_postgres::Client,
     schema_name: &str,
@@ -61,7 +65,6 @@ pub async fn check_and_handle_deadlock_risk(
     );
 
     let mut retry_count = 0;
-    const MAX_RETRIES: u32 = 12; // 1 hour max (12 * 5 minutes)
 
     loop {
         // Atomically check and insert if not present
@@ -97,18 +100,18 @@ pub async fn check_and_handle_deadlock_risk(
 
             logger.log(
                 logging::LogLevel::Warning,
-                &format!("[DEBUG] Potential deadlock detected! Table {} is already being reindexed. Waiting 5 minutes... (retry {}/{})", 
-                    full_table_name, retry_count, MAX_RETRIES),
+                &format!("[DEBUG] Potential deadlock detected! Table {} is already being reindexed. Waiting {} seconds... (retry {}/{})", 
+                    full_table_name, DEADLOCK_WAIT_SECONDS, retry_count, MAX_RETRIES),
             );
 
             // Wait 5 minutes
-            tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(DEADLOCK_WAIT_SECONDS)).await;
 
             logger.log(
                 logging::LogLevel::Info,
                 &format!(
-                    "[DEBUG] Retrying reindex for {}.{} after 5 minute wait",
-                    schema_name, index_name
+                    "[DEBUG] Retrying reindex for {}.{} after {} second wait",
+                    schema_name, index_name, DEADLOCK_WAIT_SECONDS
                 ),
             );
 
