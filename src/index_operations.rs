@@ -286,21 +286,31 @@ pub async fn reindex_index_with_client(
 
     let reindexing_results = crate::checks::perform_reindexing_checks(&client).await?;
     
-    if reindexing_results.active_vacuum
-        || (reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots)
-        || (reindexing_results.sync_replication_connection && !skip_sync_replication_connection)
-    {
+    // Determine specific skip reason for better debugging
+    let mut skip_reasons = Vec::new();
+    if reindexing_results.active_vacuum {
+        skip_reasons.push("active vacuum");
+    }
+    if reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots {
+        skip_reasons.push("inactive replication slots");
+    }
+    if reindexing_results.sync_replication_connection && !skip_sync_replication_connection {
+        skip_reasons.push("sync replication connection");
+    }
+
+    if !skip_reasons.is_empty() {
+        let skip_reason = skip_reasons.join(", ");
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "[DEBUG] Skipping {}.{} due to current reindexing conditions",
-                schema_name, index_name
+                "[DEBUG] Skipping {}.{} due to: {}",
+                schema_name, index_name, skip_reason
             ),
         );
         logger.log_index_skipped(
             &schema_name,
             &index_name,
-            "Active vacuum, pgreindexer or inactive replication slots detected",
+            &format!("Skipped due to: {}", skip_reason),
         );
 
         // Save skipped record to logbook
