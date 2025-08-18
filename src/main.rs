@@ -8,6 +8,9 @@ use std::{env, fs, path::Path, sync::Arc};
 use tokio::sync::Semaphore;
 use tokio_postgres::NoTls;
 
+// Application constants
+const MAX_MAINTENANCE_WORK_MEM_GB: u64 = 32;
+
 mod checks;
 mod connection;
 mod deadlock;
@@ -102,12 +105,12 @@ struct Args {
     )]
     max_size_gb: u64,
 
-    /// Maximum maintenance work mem in GB (default: 1 GB )
+    /// Maximum maintenance work mem in GB (default: 1 GB, max: 32 GB)
     #[arg(
         short = 'w',
         long,
         default_value = "1",
-        help = "Maximum maintenance work mem in GB"
+        help = "Maximum maintenance work mem in GB (max: 32 GB)"
     )]
     maintenance_work_mem_gb: u64,
 
@@ -227,6 +230,14 @@ async fn main() -> Result<()> {
                 threshold
             ));
         }
+    }
+
+    // Validate maintenance work mem limit
+    if args.maintenance_work_mem_gb > MAX_MAINTENANCE_WORK_MEM_GB {
+        return Err(anyhow::anyhow!(
+            "Maintenance work mem ({}) exceeds maximum limit of {} GB. Please reduce the value.",
+            args.maintenance_work_mem_gb, MAX_MAINTENANCE_WORK_MEM_GB
+        ));
     }
 
     // Initialize logger
