@@ -69,13 +69,11 @@ pub async fn check_and_handle_deadlock_risk(
             let mut tracker = shared_tracker.lock().await;
             
             // Check if our table is already being reindexed
-            if tracker.tables_being_reindexed.contains_key(&full_table_name) {
+            if tracker.tables_being_reindexed.contains(&full_table_name) {
                 true // Need to wait
             } else {
                 // No conflict, add our table to the tracker
-                tracker
-                    .tables_being_reindexed
-                    .insert(full_table_name.clone(), index_name.to_string());
+                tracker.tables_being_reindexed.insert(full_table_name.clone());
                 logger.log(
                     logging::LogLevel::Info,
                     &format!("[DEBUG] Added table {} to reindex tracker", full_table_name),

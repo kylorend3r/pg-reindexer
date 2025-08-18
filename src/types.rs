@@ -36,13 +36,13 @@ impl std::fmt::Display for ReindexStatus {
 
 #[derive(Debug)]
 pub struct SharedTableTracker {
-    pub tables_being_reindexed: std::collections::HashMap<String, String>, // table_name -> index_name
+    pub tables_being_reindexed: std::collections::HashSet<String>, // table_name
 }
 
 impl SharedTableTracker {
     pub fn new() -> Self {
         Self {
-            tables_being_reindexed: std::collections::HashMap::new(),
+            tables_being_reindexed: std::collections::HashSet::new(),
         }
     }
 }
