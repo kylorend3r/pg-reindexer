@@ -40,7 +40,6 @@ pub async fn perform_reindexing_checks(client: &Client) -> Result<ReindexingChec
 
     Ok(ReindexingCheckResults {
         active_vacuum,
-        active_pgreindexer,
         inactive_replication_slots,
         sync_replication_connection,
     })

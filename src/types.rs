@@ -8,7 +8,6 @@ pub struct IndexInfo {
 #[derive(Debug, Clone)]
 pub struct ReindexingCheckResults {
     pub active_vacuum: bool,
-    pub active_pgreindexer: bool,
     pub inactive_replication_slots: bool,
     pub sync_replication_connection: bool,
 }
