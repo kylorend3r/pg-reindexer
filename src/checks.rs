@@ -2,14 +2,6 @@ use crate::types::ReindexingCheckResults;
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
-// check if there is an already running pgreindexer process
-pub async fn get_running_pgreindexer(client: &Client) -> Result<bool> {
-    let rows = client
-        .query(crate::queries::GET_RUNNING_PGREINDEXER, &[])
-        .await
-        .context("Failed to query running pgreindexer")?;
-    Ok(rows.len() > 0)
-}
 
 // check the active vacuums
 pub async fn get_active_vacuum(client: &Client) -> Result<bool> {
@@ -43,7 +35,6 @@ pub async fn get_sync_replication_connection(client: &Client) -> Result<bool> {
 // Perform all reindexing checks once and return results
 pub async fn perform_reindexing_checks(client: &Client) -> Result<ReindexingCheckResults> {
     let active_vacuum = get_active_vacuum(client).await?;
-    let active_pgreindexer = get_running_pgreindexer(client).await?;
     let inactive_replication_slots = get_inactive_replication_slots(client).await?;
     let sync_replication_connection = get_sync_replication_connection(client).await?;
 

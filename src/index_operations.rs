@@ -287,7 +287,6 @@ pub async fn reindex_index_with_client(
     let reindexing_results = crate::checks::perform_reindexing_checks(&client).await?;
     
     if reindexing_results.active_vacuum
-        || reindexing_results.active_pgreindexer
         || (reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots)
         || (reindexing_results.sync_replication_connection && !skip_sync_replication_connection)
     {
