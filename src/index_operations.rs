@@ -1,6 +1,6 @@
 use crate::deadlock::{check_and_handle_deadlock_risk, remove_table_from_tracker};
 use crate::logging;
-use crate::types::{IndexInfo, ReindexingCheckResults, SharedTableTracker};
+use crate::types::{IndexInfo, SharedTableTracker};
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
@@ -119,7 +119,6 @@ pub async fn reindex_index_with_client(
     verbose: bool,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
-    reindexing_results: Arc<ReindexingCheckResults>,
     shared_tracker: Arc<tokio::sync::Mutex<SharedTableTracker>>,
     logger: Arc<logging::Logger>,
     bloat_threshold: Option<u8>,
@@ -276,15 +275,17 @@ pub async fn reindex_index_with_client(
         }
     }
 
-    // Check reindexing conditions
+    // Perform fresh reindexing checks for this thread
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Checking reindexing conditions for {}.{}",
+            "[DEBUG] Performing fresh reindexing checks for {}.{}",
             schema_name, index_name
         ),
     );
 
+    let reindexing_results = crate::checks::perform_reindexing_checks(&client).await?;
+    
     if reindexing_results.active_vacuum
         || reindexing_results.active_pgreindexer
         || (reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots)
@@ -293,7 +294,7 @@ pub async fn reindex_index_with_client(
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "[DEBUG] Skipping {}.{} due to reindexing conditions",
+                "[DEBUG] Skipping {}.{} due to current reindexing conditions",
                 schema_name, index_name
             ),
         );

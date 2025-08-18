@@ -1,4 +1,4 @@
-use crate::checks::perform_reindexing_checks;
+
 use crate::connection::{create_connection_with_session_parameters, set_session_parameters};
 use crate::index_operations::{get_indexes_in_schema, reindex_index_with_client};
 use crate::types::{IndexInfo, SharedTableTracker};
@@ -489,10 +489,8 @@ async fn main() -> Result<()> {
         "Session parameters and schema setup completed",
     );
 
-    // Perform reindexing checks once and share results
-    logger.log(logging::LogLevel::Info, "Performing reindexing checks...");
-    let reindexing_results = perform_reindexing_checks(&client).await?;
-    let reindexing_results = Arc::new(reindexing_results);
+    // Note: Per-thread checks will be performed when each thread starts
+    logger.log(logging::LogLevel::Info, "Per-thread checks will be performed when each thread starts");
 
     // Adjust thread count if table name is provided
     let effective_threads = if args.table.is_some() {
@@ -535,7 +533,6 @@ async fn main() -> Result<()> {
         let verbose = args.verbose;
         let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
         let skip_sync_replication_connection = args.skip_sync_replication_connection;
-        let reindexing_results = reindexing_results.clone();
         let shared_tracker = shared_tracker.clone();
         let logger = logger.clone();
         let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
@@ -567,7 +564,6 @@ async fn main() -> Result<()> {
                 verbose,
                 skip_inactive_replication_slots,
                 skip_sync_replication_connection,
-                reindexing_results,
                 shared_tracker,
                 logger,
                 bloat_threshold,
