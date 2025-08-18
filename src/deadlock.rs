@@ -64,26 +64,25 @@ pub async fn check_and_handle_deadlock_risk(
     const MAX_RETRIES: u32 = 12; // 1 hour max (12 * 5 minutes)
 
     loop {
-        // Check shared tracker for currently reindexed tables
-        let current_tables = {
-            let tracker = shared_tracker.lock().await;
-            tracker
-                .tables_being_reindexed
-                .keys()
-                .cloned()
-                .collect::<Vec<String>>()
+        // Atomically check and insert if not present
+        let should_wait = {
+            let mut tracker = shared_tracker.lock().await;
+            
+            // Check if our table is already being reindexed
+            if tracker.tables_being_reindexed.contains(&full_table_name) {
+                true // Need to wait
+            } else {
+                // No conflict, add our table to the tracker
+                tracker.tables_being_reindexed.insert(full_table_name.clone());
+                logger.log(
+                    logging::LogLevel::Info,
+                    &format!("[DEBUG] Added table {} to reindex tracker", full_table_name),
+                );
+                false // Can proceed
+            }
         };
 
-        logger.log(
-            logging::LogLevel::Info,
-            &format!(
-                "[DEBUG] Current tables being reindexed: {:?}",
-                current_tables
-            ),
-        );
-
-        // Check if our table is already being reindexed
-        if current_tables.contains(&full_table_name) {
+        if should_wait {
             retry_count += 1;
             if retry_count > MAX_RETRIES {
                 logger.log(
@@ -117,17 +116,7 @@ pub async fn check_and_handle_deadlock_risk(
             continue;
         }
 
-        // No deadlock risk, add our table to the tracker and break out of the loop
-        {
-            let mut tracker = shared_tracker.lock().await;
-            tracker
-                .tables_being_reindexed
-                .insert(full_table_name.clone(), index_name.to_string());
-            logger.log(
-                logging::LogLevel::Info,
-                &format!("[DEBUG] Added table {} to reindex tracker", full_table_name),
-            );
-        }
+        // Successfully added to tracker, break out of the loop
         break;
     }
 
