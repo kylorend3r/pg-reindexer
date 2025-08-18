@@ -123,6 +123,7 @@ pub async fn reindex_index_with_client(
     shared_tracker: Arc<tokio::sync::Mutex<SharedTableTracker>>,
     logger: Arc<logging::Logger>,
     bloat_threshold: Option<u8>,
+    concurrently: bool,
 ) -> Result<()> {
     logger.log_index_start(
         index_num,
@@ -157,9 +158,25 @@ pub async fn reindex_index_with_client(
         ),
     );
 
-    let reindex_sql = format!(
-        "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
-        schema_name, index_name
+    let reindex_sql = if concurrently {
+        format!(
+            "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
+            schema_name, index_name
+        )
+    } else {
+        format!(
+            "REINDEX INDEX \"{}\".\"{}\"",
+            schema_name, index_name
+        )
+    };
+
+    logger.log(
+        logging::LogLevel::Info,
+        &format!(
+            "[DEBUG] Using {} reindexing for {}.{}",
+            if concurrently { "online (CONCURRENTLY)" } else { "offline" },
+            schema_name, index_name
+        ),
     );
 
     // check if the index is invalid before reindexing

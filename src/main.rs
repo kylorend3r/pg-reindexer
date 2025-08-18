@@ -145,6 +145,14 @@ struct Args {
         help = "Reindex only indexes with bloat ratio above this percentage (0-100). If not specified, all indexes will be reindexed."
     )]
     reindex_only_bloated: Option<u8>,
+
+    /// Use CONCURRENTLY for online reindexing (default: true)
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX)."
+    )]
+    concurrently: bool,
 }
 
 fn get_password_from_pgpass(
@@ -523,6 +531,7 @@ async fn main() -> Result<()> {
         let max_parallel_maintenance_workers = args.max_parallel_maintenance_workers;
         let maintenance_io_concurrency = args.maintenance_io_concurrency;
         let bloat_threshold = args.reindex_only_bloated;
+        let concurrently = args.concurrently;
 
         let task = tokio::spawn(async move {
             // Acquire permit from semaphore
@@ -551,6 +560,7 @@ async fn main() -> Result<()> {
                 shared_tracker,
                 logger,
                 bloat_threshold,
+                concurrently,
             )
             .await
         });

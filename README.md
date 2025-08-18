@@ -169,6 +169,7 @@ Options:
   -c, --maintenance-io-concurrency <MAINTENANCE_IO_CONCURRENCY>  Maintenance IO concurrency. Controls the number of concurrent I/O operations during maintenance operations [default: 10]
   -l, --log-file <LOG_FILE>                             Log file path (default: reindexer.log in current directory) [default: reindexer.log]
       --reindex-only-bloated <PERCENTAGE>               Reindex only indexes with bloat ratio above this percentage (0-100). If not specified, all indexes will be reindexed
+      --concurrently                                     Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX) [default: true]
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
@@ -183,7 +184,8 @@ Options:
 - **Constraint awareness**: Automatically skips primary keys and unique constraints (which can't use CONCURRENTLY)
 
 ### ⚡ **Concurrent Operations with Safety**
-- **Non-blocking reindexing**: Uses `REINDEX INDEX CONCURRENTLY` to minimize downtime
+- **Flexible reindexing modes**: Choose between online (`REINDEX INDEX CONCURRENTLY`) or offline (`REINDEX INDEX`) reindexing
+- **Non-blocking reindexing**: Uses `REINDEX INDEX CONCURRENTLY` by default to minimize downtime
 - **Smart threading**: Multiple threads for different tables, but protects same table from concurrent operations
 - **Deadlock prevention**: Intelligent concurrent operations that allow multiple tables but protect same table from simultaneous reindex operations
 - **Configurable concurrency**: 1-32 threads with automatic validation against PostgreSQL limits
