@@ -1,11 +1,6 @@
 // SQL queries used throughout the application
 
-pub const GET_RUNNING_PGREINDEXER: &str = r#"
-    SELECT * FROM pg_stat_activity 
-    WHERE state = 'active' 
-    AND upper(query) LIKE '%pgreindexer%' 
-    AND pid != pg_backend_pid();
-"#;
+
 
 pub const GET_ACTIVE_VACUUM: &str = r#"
     SELECT * FROM pg_stat_activity 

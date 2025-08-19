@@ -1,6 +1,6 @@
 use crate::deadlock::{check_and_handle_deadlock_risk, remove_table_from_tracker};
 use crate::logging;
-use crate::types::{IndexInfo, ReindexingCheckResults, SharedTableTracker};
+use crate::types::{IndexInfo, SharedTableTracker};
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
@@ -119,7 +119,6 @@ pub async fn reindex_index_with_client(
     verbose: bool,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
-    reindexing_results: Arc<ReindexingCheckResults>,
     shared_tracker: Arc<tokio::sync::Mutex<SharedTableTracker>>,
     logger: Arc<logging::Logger>,
     bloat_threshold: Option<u8>,
@@ -276,31 +275,42 @@ pub async fn reindex_index_with_client(
         }
     }
 
-    // Check reindexing conditions
+    // Perform fresh reindexing checks for this thread
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Checking reindexing conditions for {}.{}",
+            "[DEBUG] Performing fresh reindexing checks for {}.{}",
             schema_name, index_name
         ),
     );
 
-    if reindexing_results.active_vacuum
-        || reindexing_results.active_pgreindexer
-        || (reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots)
-        || (reindexing_results.sync_replication_connection && !skip_sync_replication_connection)
-    {
+    let reindexing_results = crate::checks::perform_reindexing_checks(&client).await?;
+    
+    // Determine specific skip reason for better debugging
+    let mut skip_reasons = Vec::new();
+    if reindexing_results.active_vacuum {
+        skip_reasons.push("active vacuum");
+    }
+    if reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots {
+        skip_reasons.push("inactive replication slots");
+    }
+    if reindexing_results.sync_replication_connection && !skip_sync_replication_connection {
+        skip_reasons.push("sync replication connection");
+    }
+
+    if !skip_reasons.is_empty() {
+        let skip_reason = skip_reasons.join(", ");
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "[DEBUG] Skipping {}.{} due to reindexing conditions",
-                schema_name, index_name
+                "[DEBUG] Skipping {}.{} due to: {}",
+                schema_name, index_name, skip_reason
             ),
         );
         logger.log_index_skipped(
             &schema_name,
             &index_name,
-            "Active vacuum, pgreindexer or inactive replication slots detected",
+            &format!("Skipped due to: {}", skip_reason),
         );
 
         // Save skipped record to logbook
