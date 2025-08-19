@@ -10,7 +10,7 @@ pub const GET_RUNNING_PGREINDEXER: &str = r#"
 pub const GET_ACTIVE_VACUUM: &str = r#"
     SELECT * FROM pg_stat_activity 
     WHERE state = 'active' 
-    AND upper(query) LIKE '%VACUUM%' 
+    AND lower(query) LIKE 'vacuum%' 
     AND pid != pg_backend_pid();
 "#;
 
