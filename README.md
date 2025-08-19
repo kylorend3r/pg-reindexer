@@ -191,9 +191,10 @@ Options:
 - **Configurable concurrency**: 1-32 threads with automatic validation against PostgreSQL limits
 
 ### 🛡️ **Built-in Safety Checks**
-- **Active process detection**: Automatically skips reindexing when vacuums or other maintenance processes are active
+- **Active vacuum detection**: Automatically skips reindexing when manual vacuum operations are active (excludes autovacuum)
 - **Replication safety**: Checks for inactive replication slots to prevent WAL size issues
 - **Sync replica protection**: Stops operations when sync replication is detected to prevent primary unresponsiveness
+- **Per-thread validation**: Each thread performs fresh safety checks when it starts (no stale data)
 - **Configurable overrides**: Use CLI arguments to manage safety check behavior
 - **Thread validation**: Automatic validation of thread count and PostgreSQL worker limits
 
@@ -205,8 +206,8 @@ Options:
 
 ### 🔧 **Performance Optimization**
 - **Configurable GUCs**: Set PostgreSQL parameters for optimal performance:
-  - `maintenance_work_mem`: Control memory allocation for index operations
-  - `maintenance_io_concurrency`: Manage concurrent I/O operations
+  - `maintenance_work_mem`: Control memory allocation for index operations (max: 32 GB)
+  - `maintenance_io_concurrency`: Manage concurrent I/O operations (max: 512)
   - `max_parallel_maintenance_workers`: Control parallel worker count
 - **Resource management**: Balance performance vs. system resource consumption
 - **Smart defaults**: Uses PostgreSQL defaults when parameters are set to 0
@@ -234,7 +235,7 @@ CREATE TABLE reindexer.reindex_logbook (
 
 - `success`: Index was successfully reindexed and validated
 - `validation_failed`: Index reindexing completed but validation failed
-- `skipped`: Index was skipped due to active vacuum or other pgreindexer processes
+- `skipped`: Index was skipped due to active vacuum, inactive replication slots, or sync replication
 - `below_bloat_threshold`: Index was skipped because its bloat ratio was below the specified threshold
 - `invalid_index`: Index was skipped because it was found to be invalid
 
