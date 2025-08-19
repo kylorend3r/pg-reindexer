@@ -12,6 +12,16 @@ pub async fn get_active_vacuum(client: &Client) -> Result<bool> {
     Ok(rows.len() > 0)
 }
 
+// check if there's an active vacuum on a specific table
+pub async fn get_active_vacuum_on_table(client: &Client, schema_name: &str, table_name: &str) -> Result<bool> {
+    let table_pattern = format!("%{}.{}%", schema_name, table_name);
+    let rows = client
+        .query(crate::queries::GET_ACTIVE_VACUUM, &[&table_pattern])
+        .await
+        .context("Failed to query active vacuum on specific table")?;
+    Ok(rows.len() > 0)
+}
+
 // check the inactive replication slots
 pub async fn get_inactive_replication_slots(client: &Client) -> Result<bool> {
     let rows = client
@@ -40,6 +50,23 @@ pub async fn perform_reindexing_checks(client: &Client) -> Result<ReindexingChec
 
     Ok(ReindexingCheckResults {
         active_vacuum,
+        inactive_replication_slots,
+        sync_replication_connection,
+    })
+}
+
+// Perform reindexing checks for a specific table
+pub async fn perform_reindexing_checks_for_table(
+    client: &Client, 
+    schema_name: &str, 
+    table_name: &str
+) -> Result<ReindexingCheckResults> {
+    let active_vacuum_on_table = get_active_vacuum_on_table(client, schema_name, table_name).await?;
+    let inactive_replication_slots = get_inactive_replication_slots(client).await?;
+    let sync_replication_connection = get_sync_replication_connection(client).await?;
+
+    Ok(ReindexingCheckResults {
+        active_vacuum: active_vacuum_on_table, // Now specific to the table
         inactive_replication_slots,
         sync_replication_connection,
     })

@@ -284,7 +284,22 @@ pub async fn reindex_index_with_client(
         ),
     );
 
-    let reindexing_results = crate::checks::perform_reindexing_checks(&client).await?;
+    // Get the table name for this index to check for table-specific vacuum
+    let reindexing_results = match crate::deadlock::get_table_name_for_index(&client, &schema_name, &index_name).await {
+        Ok(table_name) => {
+            // Use table-specific vacuum check
+            crate::checks::perform_reindexing_checks_for_table(&client, &schema_name, &table_name).await?
+        }
+        Err(e) => {
+            logger.log(
+                logging::LogLevel::Warning,
+                &format!("[DEBUG] Failed to get table name for index {}.{}: {}. Using general vacuum check.", 
+                    schema_name, index_name, e),
+            );
+            // Fall back to general vacuum check if we can't get table name
+            crate::checks::perform_reindexing_checks(&client).await?
+        }
+    };
     
     // Determine specific skip reason for better debugging
     let mut skip_reasons = Vec::new();
