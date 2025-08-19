@@ -126,7 +126,7 @@ pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-paral
 pg-reindexer --schema public --threads 8 --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4 --maintenance-io-concurrency 256
 
 # Emergency operation (maximum safety)
-pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1 --skip-inactive-replication-slots --skip-sync-replication-connection
+pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1 --skip-inactive-replication-slots --skip-sync-replication-connection --skip-active-vacuums
 ```
 
 
@@ -163,6 +163,7 @@ Options:
   -v, --verbose                                         Verbose output
   -i, --skip-inactive-replication-slots                 Skip inactive replication slots check
   -r, --skip-sync-replication-connection                Skip sync replication connection check
+      --skip-active-vacuums                              Skip active vacuum check
   -m, --max-size-gb <MAX_SIZE_GB>                      Maximum index size in GB. Indexes larger than this will be excluded from reindexing [default: 1024]
   -w, --maintenance-work-mem-gb <MAINTENANCE_WORK_MEM_GB>  Maximum maintenance work mem in GB (max: 32 GB) [default: 1]
   -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2) [default: 2]

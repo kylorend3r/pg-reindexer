@@ -119,6 +119,7 @@ pub async fn reindex_index_with_client(
     verbose: bool,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
+    skip_active_vacuums: bool,
     shared_tracker: Arc<tokio::sync::Mutex<SharedTableTracker>>,
     logger: Arc<logging::Logger>,
     bloat_threshold: Option<u8>,
@@ -288,7 +289,7 @@ pub async fn reindex_index_with_client(
     
     // Determine specific skip reason for better debugging
     let mut skip_reasons = Vec::new();
-    if reindexing_results.active_vacuum {
+    if reindexing_results.active_vacuum && !skip_active_vacuums {
         skip_reasons.push("active vacuum");
     }
     if reindexing_results.inactive_replication_slots && !skip_inactive_replication_slots {

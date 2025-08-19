@@ -96,6 +96,14 @@ struct Args {
         help = "Skip checking sync replication connection/slot status. If there is a sync replication instance, it will be skipped.")]
     skip_sync_replication_connection: bool,
 
+    /// Skip active vacuum check
+    #[arg(
+        long, 
+        default_value = "false",
+        help = "Skip checking active vacuum processes. If there is an active vacuum process, it will be skipped."
+    )]
+    skip_active_vacuums: bool,
+
     /// Maximum index size in GB (default: 1024 GB = 1TB)
     #[arg(
         short = 'm',
@@ -533,6 +541,7 @@ async fn main() -> Result<()> {
         let verbose = args.verbose;
         let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
         let skip_sync_replication_connection = args.skip_sync_replication_connection;
+        let skip_active_vacuums = args.skip_active_vacuums;
         let shared_tracker = shared_tracker.clone();
         let logger = logger.clone();
         let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
@@ -564,6 +573,7 @@ async fn main() -> Result<()> {
                 verbose,
                 skip_inactive_replication_slots,
                 skip_sync_replication_connection,
+                skip_active_vacuums,
                 shared_tracker,
                 logger,
                 bloat_threshold,
