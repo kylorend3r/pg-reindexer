@@ -116,7 +116,6 @@ pub async fn reindex_index_with_client(
     index_type: String,
     index_num: usize,
     total_indexes: usize,
-    verbose: bool,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
     skip_active_vacuums: bool,
@@ -280,7 +279,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Performing fresh reindexing checks for {}.{}",
+            "[DEBUG] Performing validation checks for {}.{} before reindexing",
             schema_name, index_name
         ),
     );
@@ -337,14 +336,7 @@ pub async fn reindex_index_with_client(
         ),
     );
 
-    // Check for potential deadlock before executing reindex
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "[DEBUG] Checking deadlock risk for {}.{}",
-            schema_name, index_name
-        ),
-    );
+
     check_and_handle_deadlock_risk(&client, &schema_name, &index_name, &shared_tracker, &logger)
         .await?;
 
@@ -390,9 +382,6 @@ pub async fn reindex_index_with_client(
     let after_size = get_index_size(&client, &schema_name, &index_name).await?;
     let size_change = after_size - before_size;
 
-    if verbose {
-        logger.log_index_size_info(before_size, after_size, size_change);
-    }
 
     // Additional check: validate index integrity before saving
     logger.log(

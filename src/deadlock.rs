@@ -59,8 +59,8 @@ pub async fn check_and_handle_deadlock_risk(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Checking deadlock risk for index {}.{} on table {}",
-            schema_name, index_name, full_table_name
+            "[DEBUG] Checking if the table {}.{} is being reindexed by another thread.",
+            schema_name, full_table_name
         ),
     );
 
@@ -79,7 +79,7 @@ pub async fn check_and_handle_deadlock_risk(
                 tracker.tables_being_reindexed.insert(full_table_name.clone());
                 logger.log(
                     logging::LogLevel::Info,
-                    &format!("[DEBUG] Added table {} to reindex tracker", full_table_name),
+                    &format!("[DEBUG] Added table {} to active reindex table", full_table_name),
                 );
                 false // Can proceed
             }
@@ -126,7 +126,7 @@ pub async fn check_and_handle_deadlock_risk(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] No deadlock risk detected for {}.{}",
+            "[DEBUG] The table which {}.{} belongs to is not being reindexed by another thread. Proceeding with reindexing.",
             schema_name, index_name
         ),
     );

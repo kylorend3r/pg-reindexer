@@ -46,13 +46,13 @@ chmod +x pg-reindexer-x86_64-unknown-linux-gnu
 pg-reindexer --schema public --dry-run
 
 # Reindex all indexes in a schema
-pg-reindexer --schema public --verbose
+pg-reindexer --schema public
 
 # Reindex indexes for a specific table
-pg-reindexer --schema public --table users --verbose
+pg-reindexer --schema public --table users
 
 # High-performance reindexing
-pg-reindexer --schema public --threads 8 --verbose
+pg-reindexer --schema public --threads 8
 ```
 
 ## Usage Examples
@@ -63,24 +63,22 @@ pg-reindexer --schema public --threads 8 --verbose
 # Dry run (always test first!)
 pg-reindexer --schema public --dry-run
 
-# Basic operation with verbose output
-pg-reindexer --schema public --verbose
 
 # Specific table reindexing
-pg-reindexer --schema public --table users --verbose
+pg-reindexer --schema public --table users
 ```
 
 ### 🔧 **Thread Count Variations**
 
 ```bash
 # Production safe (1 thread)
-pg-reindexer --schema public --threads 1 --verbose
+pg-reindexer --schema public --threads 1 
 
 # High performance (8 threads)
-pg-reindexer --schema public --threads 8 --verbose
+pg-reindexer --schema public --threads 8 
 
 # Maximum threads (32)
-pg-reindexer --schema public --threads 32 --verbose
+pg-reindexer --schema public --threads 32 
 ```
 
 ### 💾 **Memory and Performance Settings**
@@ -140,7 +138,7 @@ export PG_USER=postgres
 export PG_PASSWORD=mypassword
 
 # Then run without connection parameters
-pg-reindexer --schema public --verbose
+pg-reindexer --schema public 
 ```
 
 ## Command Line Interface
@@ -160,7 +158,6 @@ Options:
   -t, --table <TABLE>                                   Table name to reindex (optional - if not provided, reindexes all indexes in schema)
   -f, --dry-run                                         Dry run - show what would be reindexed without actually doing it
   -n, --threads <THREADS>                               Number of concurrent threads for reindexing (default: 2, max: 32) [default: 2]
-  -v, --verbose                                         Verbose output
   -i, --skip-inactive-replication-slots                 Skip inactive replication slots check
   -r, --skip-sync-replication-connection                Skip sync replication connection check
       --skip-active-vacuums                              Skip active vacuum check

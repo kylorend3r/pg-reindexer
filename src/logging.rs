@@ -62,17 +62,6 @@ impl Logger {
         );
     }
 
-    pub fn log_index_size_info(&self, before_size: i64, after_size: i64, size_change: i64) {
-        self.log(
-            LogLevel::Info,
-            &format!(
-                "  Size Analysis: Before={}, After={}, Change={}",
-                format_size(before_size),
-                format_size(after_size),
-                format_size(size_change)
-            ),
-        );
-    }
 
     pub fn log_index_success(&self, schema: &str, index: &str) {
         self.log(
@@ -178,10 +167,4 @@ impl Logger {
             &format!("Maintenance IO concurrency: {}", maintenance_io_concurrency),
         );
     }
-}
-
-fn format_size(bytes: i64) -> String {
-    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-    let bytes_f = bytes as f64;
-    format!("{:.2} GB", bytes_f / GB)
 }
