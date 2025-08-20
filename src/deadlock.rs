@@ -126,7 +126,7 @@ pub async fn check_and_handle_deadlock_risk(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] No deadlock risk detected for {}.{}",
+            "[DEBUG] The table which {}.{} belongs to is not being reindexed by another thread. Proceeding with reindexing.",
             schema_name, index_name
         ),
     );
