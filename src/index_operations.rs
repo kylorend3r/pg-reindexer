@@ -383,9 +383,6 @@ pub async fn reindex_index_with_client(
     let after_size = get_index_size(&client, &schema_name, &index_name).await?;
     let size_change = after_size - before_size;
 
-    if verbose {
-        logger.log_index_size_info(before_size, after_size, size_change);
-    }
 
     // Additional check: validate index integrity before saving
     logger.log(
