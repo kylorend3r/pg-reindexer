@@ -70,14 +70,6 @@ struct Args {
     )]
     threads: usize,
 
-    /// Verbose output
-    #[arg(
-        short = 'v', 
-        long, 
-        default_value = "false", 
-        help = "Verbose output. If set to true, it will print more detailed information about the reindexing process."
-    )]
-    verbose: bool,
 
     /// Skip inactive replication slots check
     #[arg(
@@ -538,7 +530,6 @@ async fn main() -> Result<()> {
         let schema_name = index.schema_name.clone();
         let index_name = index.index_name.clone();
         let index_type = index.index_type.clone();
-        let verbose = args.verbose;
         let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
         let skip_sync_replication_connection = args.skip_sync_replication_connection;
         let skip_active_vacuums = args.skip_active_vacuums;
@@ -570,7 +561,6 @@ async fn main() -> Result<()> {
                 index_type,
                 i,
                 total_indexes,
-                verbose,
                 skip_inactive_replication_slots,
                 skip_sync_replication_connection,
                 skip_active_vacuums,

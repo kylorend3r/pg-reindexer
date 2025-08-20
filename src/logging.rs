@@ -168,9 +168,3 @@ impl Logger {
         );
     }
 }
-
-fn format_size(bytes: i64) -> String {
-    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-    let bytes_f = bytes as f64;
-    format!("{:.2} GB", bytes_f / GB)
-}

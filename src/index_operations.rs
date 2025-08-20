@@ -116,7 +116,6 @@ pub async fn reindex_index_with_client(
     index_type: String,
     index_num: usize,
     total_indexes: usize,
-    verbose: bool,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
     skip_active_vacuums: bool,
