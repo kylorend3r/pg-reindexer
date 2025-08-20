@@ -2,7 +2,7 @@
 
 # PostgreSQL Reindexer
 
-A high-performance, production-ready PostgreSQL index maintenance tool written in Rust. Safely reindex your PostgreSQL indexes with intelligent resource management and comprehensive logging.
+A high-performance, production-ready PostgreSQL index maintenance tool written in Rust. Safely reindex your PostgreSQL indexes with intelligent resource management and comprehensive logging. Put another way: it's a Rust-based command-line tool designed to automate and optimize the critical but often complex task of PostgreSQL index maintenance. Unlike manual reindexing operations that can be risky and time-consuming.
 
 ![Reindexer](assets/reindex.gif)
 
@@ -175,40 +175,37 @@ Options:
 ## Key Features
 
 ### 🎯 **Granular Maintenance Control**
-- **Schema-level reindexing**: Reindex all indexes in a specific schema for comprehensive maintenance
-- **Table-level precision**: Target specific tables for focused maintenance cycles
-- **Flexible scheduling**: Create different maintenance strategies for different schemas/tables
-- **B-tree focus**: Optimized for the most common index type in PostgreSQL
-- **Constraint awareness**: Automatically skips primary keys and unique constraints (which can't use CONCURRENTLY)
+- **Schema-level Reindexing**: Reindex all indexes in a specific schema for comprehensive maintenance
+- **Table-level Reindexing**: Target specific tables for focused maintenance cycles
+- **Flexible Scheduling**: Create different maintenance strategies for different schemas/tables
+- **B-tree Focus**: Optimized for the most common index type in PostgreSQL
+- **Constraint Awareness**: Automatically skips primary keys and unique constraints.
 
 ### ⚡ **Concurrent Operations with Safety**
-- **Flexible reindexing modes**: Choose between online (`REINDEX INDEX CONCURRENTLY`) or offline (`REINDEX INDEX`) reindexing
-- **Non-blocking reindexing**: Uses `REINDEX INDEX CONCURRENTLY` by default to minimize downtime
-- **Smart threading**: Multiple threads for different tables, but protects same table from concurrent operations
-- **Deadlock prevention**: Intelligent concurrent operations that allow multiple tables but protect same table from simultaneous reindex operations
-- **Configurable concurrency**: 1-32 threads with automatic validation against PostgreSQL limits
+- **Flexible Reindexing Modes**: Choose between online (`REINDEX INDEX CONCURRENTLY`) or offline (`REINDEX INDEX`) reindexing
+- **Non-blocking Reindexing**: Uses `REINDEX INDEX CONCURRENTLY` by default to minimize downtime
+- **Smart Threading**: Multiple threads for different tables, but protects same table from concurrent operations
+- **Configurable Concurrency**: 1-32 threads with automatic validation against PostgreSQL limits
 
 ### 🛡️ **Built-in Safety Checks**
-- **Active vacuum detection**: Automatically skips reindexing when manual vacuum operations are active (excludes autovacuum)
-- **Replication safety**: Checks for inactive replication slots to prevent WAL size issues
-- **Sync replica protection**: Stops operations when sync replication is detected to prevent primary unresponsiveness
-- **Per-thread validation**: Each thread performs fresh safety checks when it starts (no stale data)
-- **Configurable overrides**: Use CLI arguments to manage safety check behavior
-- **Thread validation**: Automatic validation of thread count and PostgreSQL worker limits
+- **Active Vacuum Detection**: Automatically skips reindexing when manual vacuum operations are active (excludes autovacuum)
+- **Replication Safety**: Checks for inactive replication slots to prevent WAL size issues
+- **Sync Replica Protection**: Stops operations when sync replication is detected to prevent primary unresponsiveness
+- **Per-Thread Validation**: Each thread performs fresh safety checks when it starts (no stale data)
 
 ### 📊 **Intelligent Bloat Detection**
-- **Bloat ratio calculation**: Uses PostgreSQL's internal statistics to calculate index bloat percentage
-- **Threshold-based filtering**: Only reindex indexes that exceed the specified bloat threshold
-- **Efficient maintenance**: Focus resources on indexes that actually need reindexing
-- **Configurable sensitivity**: Set bloat threshold from 0-100% to match your maintenance strategy
+- **Bloat Ratio Calculation**: Uses PostgreSQL's internal statistics to calculate index bloat percentage
+- **Threshold-Based Filtering**: Only reindex indexes that exceed the specified bloat threshold
+- **Efficient Maintenance**: Focus resources on indexes that actually need reindexing
+- **Configurable Sensitivity**: Set bloat threshold from 0-100% to match your maintenance strategy
 
 ### 🔧 **Performance Optimization**
 - **Configurable GUCs**: Set PostgreSQL parameters for optimal performance:
   - `maintenance_work_mem`: Control memory allocation for index operations (max: 32 GB)
   - `maintenance_io_concurrency`: Manage concurrent I/O operations (max: 512)
   - `max_parallel_maintenance_workers`: Control parallel worker count
-- **Resource management**: Balance performance vs. system resource consumption
-- **Smart defaults**: Uses PostgreSQL defaults when parameters are set to 0
+- **Resource Management**: Balance performance vs. system resource consumption
+- **Smart Defaults**: Uses PostgreSQL defaults when parameters are set to 0
 
 ## Database Schema
 
