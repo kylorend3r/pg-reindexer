@@ -3,6 +3,8 @@ use crate::logging;
 use crate::types::{IndexInfo, SharedTableTracker};
 use anyhow::{Context, Result};
 use std::sync::Arc;
+use rand::Rng;
+use std::{thread, time};
 
 pub async fn get_indexes_in_schema(
     client: &tokio_postgres::Client,
@@ -348,6 +350,14 @@ pub async fn reindex_index_with_client(
         ),
     );
 
+    // Add random delay between 0 and 10 seconds
+    logger.log(
+        logging::LogLevel::Info,
+        &format!("[DEBUG] Adding random delay between 0 and 5 seconds for {}.{}", schema_name, index_name),
+    );
+    let artificial_delay: u32 = rand::rng().random_range(1..=5);
+    thread::sleep(time::Duration::from_secs(artificial_delay as u64));
+
     let start_time = std::time::Instant::now();
     let result = client.execute(&reindex_sql, &[]).await;
     let duration = start_time.elapsed();
@@ -383,27 +393,15 @@ pub async fn reindex_index_with_client(
     let size_change = after_size - before_size;
 
 
-    // Additional check: validate index integrity before saving
-    logger.log(
-        logging::LogLevel::Info,
-        &format!("[DEBUG] Waiting 5 seconds for index record to be written to table before validation for {}.{}", schema_name, index_name),
-    );
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    thread::sleep(time::Duration::from_secs(artificial_delay as u64));
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Validating index integrity before saving for {}.{}",
+            "[DEBUG] Checking if the index is valid before saving it to logbook for {}.{}. This is the final check because the index is already reindexed.",
             schema_name, index_name
         ),
     );
     let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "[DEBUG] Final validation result for {}.{}: {}",
-            schema_name, index_name, index_is_valid
-        ),
-    );
 
     if !index_is_valid {
         logger.log(
