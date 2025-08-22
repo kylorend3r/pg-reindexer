@@ -3,6 +3,8 @@ use crate::logging;
 use crate::types::{IndexInfo, SharedTableTracker};
 use anyhow::{Context, Result};
 use std::sync::Arc;
+use rand::Rng;
+use std::{thread, time};
 
 pub async fn get_indexes_in_schema(
     client: &tokio_postgres::Client,
@@ -347,6 +349,14 @@ pub async fn reindex_index_with_client(
             schema_name, index_name
         ),
     );
+
+    // Add random delay between 0 and 10 seconds
+    logger.log(
+        logging::LogLevel::Info,
+        &format!("[DEBUG] Adding random delay between 0 and 5 seconds for {}.{}", schema_name, index_name),
+    );
+    let artificial_delay: u32 = rand::rng().random_range(1..=5);
+    thread::sleep(time::Duration::from_secs(artificial_delay as u64));
 
     let start_time = std::time::Instant::now();
     let result = client.execute(&reindex_sql, &[]).await;
