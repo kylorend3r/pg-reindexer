@@ -393,7 +393,7 @@ pub async fn reindex_index_with_client(
     let size_change = after_size - before_size;
 
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    thread::sleep(time::Duration::from_secs(artificial_delay as u64));
     logger.log(
         logging::LogLevel::Info,
         &format!(
