@@ -18,6 +18,7 @@ pub enum ReindexStatus {
     BelowBloatThreshold,
     Skipped,
     ValidationFailed,
+    Failed,
     Success,
 }
 
@@ -28,6 +29,7 @@ impl std::fmt::Display for ReindexStatus {
             ReindexStatus::BelowBloatThreshold => write!(f, "below_bloat_threshold"),
             ReindexStatus::Skipped => write!(f, "skipped"),
             ReindexStatus::ValidationFailed => write!(f, "validation_failed"),
+            ReindexStatus::Failed => write!(f, "failed"),
             ReindexStatus::Success => write!(f, "success"),
         }
     }

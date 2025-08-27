@@ -1,7 +1,4 @@
 // SQL queries used throughout the application
-
-
-
 pub const GET_ACTIVE_VACUUM: &str = r#"
     SELECT * FROM pg_stat_activity 
     WHERE state = 'active' 
@@ -130,3 +127,6 @@ pub const GET_INDEX_BLOAT_RATIO: &str = r#"
         END as bloat_percentage
     FROM specific_index;
 "#;
+
+// Get the current temp_file_limit setting
+pub const GET_TEMP_FILE_LIMIT: &str = "SELECT setting FROM pg_settings WHERE name='temp_file_limit'";
