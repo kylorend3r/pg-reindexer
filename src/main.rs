@@ -156,6 +156,14 @@ struct Args {
         help = "Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX)."
     )]
     concurrently: bool,
+
+    /// Clean orphaned _ccnew indexes before starting reindexing
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted."
+    )]
+    clean_orphant_indexes: bool,
 }
 
 fn get_password_from_pgpass(
@@ -217,6 +225,20 @@ fn get_password_from_pgpass(
 
     Ok(None)
 }
+
+/// Check if an index name matches PostgreSQL's temporary concurrent reindex pattern
+/// This matches names like "_ccnew", "_ccnew1", "_ccnew2", etc.
+fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
+    if let Some(ccnew_pos) = index_name.find("_ccnew") {
+        // Check if the part after "_ccnew" is either empty or consists only of digits
+        let after_ccnew = &index_name[ccnew_pos + 6..];
+        after_ccnew.is_empty() || after_ccnew.chars().all(|c| c.is_ascii_digit())
+    } else {
+        false
+    }
+}
+
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -376,6 +398,14 @@ async fn main() -> Result<()> {
     }
     else {
         logger.log(logging::LogLevel::Success, "Temp file limit is not limited at database level.");
+    }
+
+    // Clean orphaned _ccnew indexes if requested
+    if args.clean_orphant_indexes {
+        logger.log(
+            logging::LogLevel::Info,
+            "Will clean orphaned _ccnew indexes during index discovery...",
+        );
     }
 
     logger.log(
@@ -555,6 +585,18 @@ async fn main() -> Result<()> {
         let bloat_threshold = args.reindex_only_bloated;
         let concurrently = args.concurrently;
 
+        // Before creating a task&connection check if the index is valid or not. Check for the index name if it matches PostgreSQL's temporary concurrent reindex pattern (_ccnew followed by optional numbers).
+        if is_temporary_concurrent_reindex_index(&index_name) && args.clean_orphant_indexes {
+            // Drop the orphaned _ccnew index
+            if let Err(e) = index_operations::clean_orphant_ccnew_index(&client, &schema_name, &index_name, &logger).await {
+                logger.log(logging::LogLevel::Error, &format!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e));
+            }
+            continue;
+        } else if is_temporary_concurrent_reindex_index(&index_name) {
+            logger.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index_name));
+            continue;
+        }
+
         let task = tokio::spawn(async move {
             // Acquire permit from semaphore
             let _permit = semaphore.acquire().await.unwrap();
@@ -601,26 +643,33 @@ async fn main() -> Result<()> {
                 error_count += 1;
                 eprintln!("  ✗ Task failed: {}", e);
                 
-                // Try to save failed record if we can extract index info from the error
+                // Check if this is a reindex failure (which already saved a record) or other failure
+                let error_msg = e.to_string();
+                let is_reindex_failure = error_msg.contains("Failed to reindex index");
+                
                 if let Some(index_info) = indexes.get(i) {
-                    logger.log_index_failed(&index_info.schema_name, &index_info.index_name, &e.to_string());
-                    if let Ok(client) = create_connection_with_session_parameters(
-                        &connection_string,
-                        args.maintenance_work_mem_gb,
-                        args.max_parallel_maintenance_workers,
-                        args.maintenance_io_concurrency,
-                    ).await {
-                        let index_data = crate::save::IndexData {
-                            schema_name: index_info.schema_name.clone(),
-                            index_name: index_info.index_name.clone(),
-                            index_type: index_info.index_type.clone(),
-                            reindex_status: crate::types::ReindexStatus::Failed,
-                            before_size: None,
-                            after_size: None,
-                            size_change: None,
-                        };
-                        if let Err(save_err) = crate::save::save_index_info(&client, &index_data).await {
-                            eprintln!("  ✗ Failed to save error record: {}", save_err);
+                    logger.log_index_failed(&index_info.schema_name, &index_info.index_name, &error_msg);
+                    
+                    // Only save a record if this is NOT a reindex failure (which already saved one)
+                    if !is_reindex_failure {
+                        if let Ok(client) = create_connection_with_session_parameters(
+                            &connection_string,
+                            args.maintenance_work_mem_gb,
+                            args.max_parallel_maintenance_workers,
+                            args.maintenance_io_concurrency,
+                        ).await {
+                            let index_data = crate::save::IndexData {
+                                schema_name: index_info.schema_name.clone(),
+                                index_name: index_info.index_name.clone(),
+                                index_type: index_info.index_type.clone(),
+                                reindex_status: crate::types::ReindexStatus::Failed,
+                                before_size: None,
+                                after_size: None,
+                                size_change: None,
+                            };
+                            if let Err(save_err) = crate::save::save_index_info(&client, &index_data).await {
+                                eprintln!("  ✗ Failed to save error record: {}", save_err);
+                            }
                         }
                     }
                 }
