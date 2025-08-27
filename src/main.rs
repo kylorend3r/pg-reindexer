@@ -616,15 +616,14 @@ async fn main() -> Result<()> {
         let concurrently = args.concurrently;
 
         // Before creating a task&connection check if the index is valid or not. Check for the index name if it matches PostgreSQL's temporary concurrent reindex pattern (_ccnew followed by optional numbers).
-        if is_temporary_concurrent_reindex_index(&index_name) {
-            if args.clean_orphant_indexes {
-                // Drop the orphaned _ccnew index
-                if let Err(e) = clean_orphant_ccnew_index(&client, &schema_name, &index_name, &logger).await {
-                    logger.log(logging::LogLevel::Error, &format!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e));
-                }
-            } else {
-                logger.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index_name));
+        if is_temporary_concurrent_reindex_index(&index_name) && args.clean_orphant_indexes {
+            // Drop the orphaned _ccnew index
+            if let Err(e) = clean_orphant_ccnew_index(&client, &schema_name, &index_name, &logger).await {
+                logger.log(logging::LogLevel::Error, &format!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e));
             }
+            continue;
+        } else if is_temporary_concurrent_reindex_index(&index_name) {
+            logger.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index_name));
             continue;
         }
 
