@@ -114,6 +114,16 @@ pg-reindexer --schema public --max-size-gb 100
 pg-reindexer --schema public --reindex-only-bloated 15
 ```
 
+### 🧹 **Orphaned Index Cleanup**
+
+```bash
+# Clean up orphaned _ccnew indexes before reindexing
+pg-reindexer --schema public --clean-orphant-indexes
+
+# Combine with other operations
+pg-reindexer --schema public --clean-orphant-indexes --threads 4 --maintenance-work-mem-gb 2
+```
+
 ### 🛡️ **Production Scenarios**
 
 ```bash
@@ -168,6 +178,7 @@ Options:
   -l, --log-file <LOG_FILE>                             Log file path (default: reindexer.log in current directory) [default: reindexer.log]
       --reindex-only-bloated <PERCENTAGE>               Reindex only indexes with bloat ratio above this percentage (0-100). If not specified, all indexes will be reindexed
       --concurrently                                     Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX) [default: true]
+      --clean-orphant-indexes                            Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted.
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
@@ -192,6 +203,7 @@ Options:
 - **Replication Safety**: Checks for inactive replication slots to prevent WAL size issues
 - **Sync Replica Protection**: Stops operations when sync replication is detected to prevent primary unresponsiveness
 - **Per-Thread Validation**: Each thread performs fresh safety checks when it starts (no stale data)
+- **Orphaned Index Cleanup**: Automatically detects and optionally drops orphaned `_ccnew` indexes left behind by interrupted concurrent reindex operations
 
 ### 📊 **Intelligent Bloat Detection**
 - **Bloat Ratio Calculation**: Uses PostgreSQL's internal statistics to calculate index bloat percentage
@@ -230,6 +242,7 @@ CREATE TABLE reindexer.reindex_logbook (
 
 - `success`: Index was successfully reindexed and validated
 - `validation_failed`: Index reindexing completed but validation failed
+- `failed`: Index reindexing failed due to SQL errors, connection issues, or task panics
 - `skipped`: Index was skipped due to active vacuum, inactive replication slots, or sync replication
 - `below_bloat_threshold`: Index was skipped because its bloat ratio was below the specified threshold
 - `invalid_index`: Index was skipped because it was found to be invalid
