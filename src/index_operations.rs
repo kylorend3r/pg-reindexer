@@ -137,7 +137,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Starting pre-reindex checks for {}.{}",
+            "Starting pre-reindex checks for {}.{}",
             schema_name, index_name
         ),
     );
@@ -146,7 +146,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Getting before size for {}.{}",
+            "Getting before size for {}.{}",
             schema_name, index_name
         ),
     );
@@ -154,7 +154,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Before size for {}.{}: {} bytes",
+            "Before size for {}.{}: {} bytes",
             schema_name, index_name, before_size
         ),
     );
@@ -174,7 +174,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Using {} reindexing for {}.{}",
+            "Using {} reindexing for {}.{}",
             if concurrently { "online (CONCURRENTLY)" } else { "offline" },
             schema_name, index_name
         ),
@@ -184,7 +184,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Validating index integrity for {}.{}",
+            "Validating index integrity for {}.{}",
             schema_name, index_name
         ),
     );
@@ -192,7 +192,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Index {}.{} validity: {}",
+            "Index {}.{} validity: {}",
             schema_name, index_name, index_is_valid
         ),
     );
@@ -226,7 +226,7 @@ pub async fn reindex_index_with_client(
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "[DEBUG] Checking bloat ratio for {}.{} (threshold: {}%)",
+                "Checking bloat ratio for {}.{} (threshold: {}%)",
                 schema_name, index_name, threshold
             ),
         );
@@ -235,7 +235,7 @@ pub async fn reindex_index_with_client(
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "[DEBUG] Bloat ratio for {}.{}: {}%",
+                "Bloat ratio for {}.{}: {}%",
                 schema_name, index_name, bloat_ratio
             ),
         );
@@ -270,7 +270,7 @@ pub async fn reindex_index_with_client(
             logger.log(
                 logging::LogLevel::Info,
                 &format!(
-                    "[DEBUG] Bloat ratio ({}%) is above threshold ({}%), proceeding with checks",
+                    "Bloat ratio ({}%) is above threshold ({}%), proceeding with checks",
                     bloat_ratio, threshold
                 ),
             );
@@ -281,7 +281,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Performing validation checks for {}.{} before reindexing",
+            "Performing validation checks for {}.{} before reindexing",
             schema_name, index_name
         ),
     );
@@ -305,7 +305,7 @@ pub async fn reindex_index_with_client(
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "[DEBUG] Skipping {}.{} due to: {}",
+                "Skipping {}.{} due to: {}",
                 schema_name, index_name, skip_reason
             ),
         );
@@ -333,7 +333,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] All pre-reindex checks passed for {}.{}",
+            "All pre-reindex checks passed for {}.{}",
             schema_name, index_name
         ),
     );
@@ -345,7 +345,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Starting reindex operation for {}.{}",
+            "Starting reindex operation for {}.{}",
             schema_name, index_name
         ),
     );
@@ -353,7 +353,7 @@ pub async fn reindex_index_with_client(
     // Add random delay between 0 and 10 seconds
     logger.log(
         logging::LogLevel::Info,
-        &format!("[DEBUG] Adding random delay between 0 and 5 seconds for {}.{}", schema_name, index_name),
+        &format!("Adding random delay between 0 and 5 seconds for {}.{}", schema_name, index_name),
     );
     let artificial_delay: u32 = rand::rng().random_range(1..=5);
     thread::sleep(time::Duration::from_secs(artificial_delay as u64));
@@ -367,7 +367,7 @@ pub async fn reindex_index_with_client(
             logger.log(
                 logging::LogLevel::Info,
                 &format!(
-                    "[DEBUG] Reindex SQL executed successfully for {}.{} in {:?}",
+                    "Reindex SQL executed successfully for {}.{} in {:?}",
                     schema_name, index_name, duration
                 ),
             );
@@ -376,7 +376,7 @@ pub async fn reindex_index_with_client(
             logger.log(
                 logging::LogLevel::Error,
                 &format!(
-                    "[DEBUG] Reindex SQL failed for {}.{} after {:?}: {}",
+                    "Reindex SQL failed for {}.{} after {:?}: {}",
                     schema_name, index_name, duration, e
                 ),
             );
@@ -397,7 +397,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Checking if the index is valid before saving it to logbook for {}.{}. This is the final check because the index is already reindexed.",
+            "Checking if the index is valid before saving it to logbook for {}.{}. This is the final check because the index is already reindexed.",
             schema_name, index_name
         ),
     );
@@ -407,7 +407,7 @@ pub async fn reindex_index_with_client(
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "[DEBUG] Index validation failed for {}.{}",
+                "Index validation failed for {}.{}",
                 schema_name, index_name
             ),
         );
@@ -432,7 +432,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Saving success record for {}.{}",
+            "Saving success record for {}.{}",
             schema_name, index_name
         ),
     );
@@ -450,7 +450,7 @@ pub async fn reindex_index_with_client(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Successfully completed reindex for {}.{}",
+            "Successfully completed reindex for {}.{}",
             schema_name, index_name
         ),
     );
