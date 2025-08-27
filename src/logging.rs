@@ -87,6 +87,16 @@ impl Logger {
         );
     }
 
+    pub fn log_index_failed(&self, schema: &str, index: &str, reason: &str) {
+        self.log(
+            LogLevel::Error,
+            &format!(
+                "{}.{} - Reindex failed: {}",
+                schema, index, reason
+            ),
+        );
+    }
+
     pub fn log_completion_message(
         &self,
         total: usize,
