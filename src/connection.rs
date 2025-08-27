@@ -21,6 +21,10 @@ pub async fn set_session_parameters(
         .execute(crate::queries::SET_APPLICATION_NAME, &[])
         .await
         .context("Set the application name.")?;
+    client
+        .execute(crate::queries::SET_LOG_STATEMENTS, &[])
+        .await
+        .context("Set log_statement to 'all'.")?;
 
     // The following operation defines the maintenance work mem in GB provided by the user.
     client
