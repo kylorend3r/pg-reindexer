@@ -578,7 +578,7 @@ async fn main() -> Result<()> {
     // Wait for all tasks to complete and collect results
     let mut error_count = 0;
 
-    for task in tasks {
+    for (i, task) in tasks.into_iter().enumerate() {
         match task.await {
             Ok(Ok(_)) => {
                 // Task completed (could be success, skipped, or validation_failed)
@@ -586,10 +586,58 @@ async fn main() -> Result<()> {
             Ok(Err(e)) => {
                 error_count += 1;
                 eprintln!("  ✗ Task failed: {}", e);
+                
+                // Try to save failed record if we can extract index info from the error
+                if let Some(index_info) = indexes.get(i) {
+                    logger.log_index_failed(&index_info.schema_name, &index_info.index_name, &e.to_string());
+                    if let Ok(client) = create_connection_with_session_parameters(
+                        &connection_string,
+                        args.maintenance_work_mem_gb,
+                        args.max_parallel_maintenance_workers,
+                        args.maintenance_io_concurrency,
+                    ).await {
+                        let index_data = crate::save::IndexData {
+                            schema_name: index_info.schema_name.clone(),
+                            index_name: index_info.index_name.clone(),
+                            index_type: index_info.index_type.clone(),
+                            reindex_status: crate::types::ReindexStatus::Failed,
+                            before_size: None,
+                            after_size: None,
+                            size_change: None,
+                        };
+                        if let Err(save_err) = crate::save::save_index_info(&client, &index_data).await {
+                            eprintln!("  ✗ Failed to save error record: {}", save_err);
+                        }
+                    }
+                }
             }
             Err(e) => {
                 error_count += 1;
                 eprintln!("  ✗ Task panicked: {}", e);
+                
+                // Try to save failed record for panicked tasks
+                if let Some(index_info) = indexes.get(i) {
+                    logger.log_index_failed(&index_info.schema_name, &index_info.index_name, &format!("Task panicked: {}", e));
+                    if let Ok(client) = create_connection_with_session_parameters(
+                        &connection_string,
+                        args.maintenance_work_mem_gb,
+                        args.max_parallel_maintenance_workers,
+                        args.maintenance_io_concurrency,
+                    ).await {
+                        let index_data = crate::save::IndexData {
+                            schema_name: index_info.schema_name.clone(),
+                            index_name: index_info.index_name.clone(),
+                            index_type: index_info.index_type.clone(),
+                            reindex_status: crate::types::ReindexStatus::Failed,
+                            before_size: None,
+                            after_size: None,
+                            size_change: None,
+                        };
+                        if let Err(save_err) = crate::save::save_index_info(&client, &index_data).await {
+                            eprintln!("  ✗ Failed to save error record: {}", save_err);
+                        }
+                    }
+                }
             }
         }
     }

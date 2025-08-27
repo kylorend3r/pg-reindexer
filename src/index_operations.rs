@@ -373,20 +373,26 @@ pub async fn reindex_index_with_client(
             );
         }
         Err(e) => {
-            logger.log(
-                logging::LogLevel::Error,
-                &format!(
-                    "[DEBUG] Reindex SQL failed for {}.{} after {:?}: {}",
-                    schema_name, index_name, duration, e
-                ),
-            );
+            logger.log_index_failed(&schema_name, &index_name, &format!("SQL execution failed after {:?}: {}", duration, e));
+            
+            // Save failed reindex record
+            let index_data = crate::save::IndexData {
+                schema_name: schema_name.clone(),
+                index_name: index_name.clone(),
+                index_type: index_type.clone(),
+                reindex_status: crate::types::ReindexStatus::Failed,
+                before_size: Some(before_size),
+                after_size: None, // Reindex failed, so no after size
+                size_change: None,
+            };
+            crate::save::save_index_info(&client, &index_data).await?;
+            
+            // Remove table from shared tracker
+            remove_table_from_tracker(&client, &schema_name, &index_name, &shared_tracker, &logger).await?;
+            
+            return Err(anyhow::anyhow!("Failed to reindex index {}.{}: {}", schema_name, index_name, e));
         }
     }
-
-    result.context(format!(
-        "Failed to reindex index {}.{}",
-        schema_name, index_name
-    ))?;
 
     // Get after size
     let after_size = get_index_size(&client, &schema_name, &index_name).await?;
