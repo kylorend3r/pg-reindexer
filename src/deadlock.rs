@@ -48,7 +48,7 @@ pub async fn check_and_handle_deadlock_risk(
         Err(e) => {
             logger.log(
                 logging::LogLevel::Warning,
-                &format!("[DEBUG] Failed to get table name for index {}.{}: {}. Proceeding without deadlock check.", 
+                &format!("Failed to get table name for index {}.{}: {}. Proceeding without deadlock check.", 
                     schema_name, index_name, e),
             );
             return Ok(());
@@ -59,7 +59,7 @@ pub async fn check_and_handle_deadlock_risk(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] Checking if the table {}.{} is being reindexed by another thread.",
+            "Checking if the table {}.{} is being reindexed by another thread.",
             schema_name, full_table_name
         ),
     );
@@ -79,7 +79,7 @@ pub async fn check_and_handle_deadlock_risk(
                 tracker.tables_being_reindexed.insert(full_table_name.clone());
                 logger.log(
                     logging::LogLevel::Info,
-                    &format!("[DEBUG] Added table {} to active reindex table", full_table_name),
+                    &format!("Added table {} to active reindex table", full_table_name),
                 );
                 false // Can proceed
             }
@@ -91,7 +91,7 @@ pub async fn check_and_handle_deadlock_risk(
                 logger.log(
                     logging::LogLevel::Error,
                     &format!(
-                        "[DEBUG] Maximum retries exceeded for {}.{}. Proceeding anyway.",
+                        "Maximum retries exceeded for {}.{}. Proceeding anyway.",
                         schema_name, index_name
                     ),
                 );
@@ -100,7 +100,7 @@ pub async fn check_and_handle_deadlock_risk(
 
             logger.log(
                 logging::LogLevel::Warning,
-                &format!("[DEBUG] Potential deadlock detected! Table {} is already being reindexed. Waiting {} seconds... (retry {}/{})", 
+                &format!("Potential deadlock detected! Table {} is already being reindexed. Waiting {} seconds... (retry {}/{})", 
                     full_table_name, DEADLOCK_WAIT_SECONDS, retry_count, MAX_RETRIES),
             );
 
@@ -110,7 +110,7 @@ pub async fn check_and_handle_deadlock_risk(
             logger.log(
                 logging::LogLevel::Info,
                 &format!(
-                    "[DEBUG] Retrying reindex for {}.{} after {} second wait",
+                    "Retrying reindex for {}.{} after {} second wait",
                     schema_name, index_name, DEADLOCK_WAIT_SECONDS
                 ),
             );
@@ -126,7 +126,7 @@ pub async fn check_and_handle_deadlock_risk(
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "[DEBUG] The table which {}.{} belongs to is not being reindexed by another thread. Proceeding with reindexing.",
+            "The table which {}.{} belongs to is not being reindexed by another thread. Proceeding with reindexing.",
             schema_name, index_name
         ),
     );
@@ -147,7 +147,7 @@ pub async fn remove_table_from_tracker(
         Err(e) => {
             logger.log(
                 logging::LogLevel::Warning,
-                &format!("[DEBUG] Failed to get table name for index {}.{}: {}. Cannot remove from tracker.", 
+                &format!("Failed to get table name for index {}.{}: {}. Cannot remove from tracker.", 
                     schema_name, index_name, e),
             );
             return Ok(());
@@ -162,7 +162,7 @@ pub async fn remove_table_from_tracker(
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "[DEBUG] Removed table {} from reindex tracker",
+                "Removed table {} from reindex tracker",
                 full_table_name
             ),
         );
