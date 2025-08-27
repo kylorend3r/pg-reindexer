@@ -364,6 +364,20 @@ async fn main() -> Result<()> {
         ));
     }
 
+    // Get the current temp_file_limit setting and check if it's limited or not.
+    // Warn the user if it's limited.
+    let temp_file_limit = client.query(queries::GET_TEMP_FILE_LIMIT, &[]).await.context("Failed to get temp_file_limit setting")?;
+    let temp_file_limit_str: String = temp_file_limit.first().unwrap().get(0);
+    let temp_file_limit: i128 = temp_file_limit_str
+        .parse()
+        .context("Failed to parse temp_file_limit value")?;
+    if !(temp_file_limit == -1) {
+        logger.log(logging::LogLevel::Warning, "Temp file limit is limited at database level. This may cause reindexing to fail at some point.Ensure you have set a proper temp_file_limit in your postgresql.conf file.");
+    }
+    else {
+        logger.log(logging::LogLevel::Success, "Temp file limit is not limited at database level.");
+    }
+
     logger.log(
         logging::LogLevel::Info,
         &format!("Discovering indexes in schema '{}'", args.schema),
