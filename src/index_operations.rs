@@ -467,3 +467,55 @@ pub async fn reindex_index_with_client(
 
     Ok(())
 }
+
+/// Drop a single orphaned _ccnew index after validating it's safe to drop
+pub async fn clean_orphant_ccnew_index(
+    client: &tokio_postgres::Client,
+    schema_name: &str,
+    index_name: &str,
+    logger: &logging::Logger,
+) -> Result<()> {
+    // First validate the index integrity to ensure it's safe to drop
+    logger.log(
+        logging::LogLevel::Info,
+        &format!("Validating index integrity before dropping orphaned index: {}.{}", schema_name, index_name),
+    );
+    
+    let index_is_valid = validate_index_integrity(client, schema_name, index_name).await?;
+    
+    if !index_is_valid {
+        logger.log(
+            logging::LogLevel::Warning,
+            &format!("Index {}.{} is invalid, proceeding with drop operation", schema_name, index_name),
+        );
+    } else {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Index {}.{} is valid, proceeding with drop operation", schema_name, index_name),
+        );
+    }
+    
+    let drop_sql = format!("DROP INDEX IF EXISTS \"{}\".\"{}\"", schema_name, index_name);
+    
+    logger.log(
+        logging::LogLevel::Info,
+        &format!("Dropping orphaned index: {}.{}", schema_name, index_name),
+    );
+
+    match client.execute(&drop_sql, &[]).await {
+        Ok(_) => {
+            logger.log(
+                logging::LogLevel::Success,
+                &format!("Successfully dropped orphaned index: {}.{}", schema_name, index_name),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            logger.log(
+                logging::LogLevel::Error,
+                &format!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e),
+            );
+            Err(anyhow::anyhow!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e))
+        }
+    }
+}

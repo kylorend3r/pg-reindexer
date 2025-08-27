@@ -238,37 +238,7 @@ fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
     }
 }
 
-/// Drop a single orphaned _ccnew index
-async fn clean_orphant_ccnew_index(
-    client: &tokio_postgres::Client,
-    schema_name: &str,
-    index_name: &str,
-    logger: &logging::Logger,
-) -> Result<()> {
-    let drop_sql = format!("DROP INDEX IF EXISTS \"{}\".\"{}\"", schema_name, index_name);
-    
-    logger.log(
-        logging::LogLevel::Info,
-        &format!("Dropping orphaned index: {}.{}", schema_name, index_name),
-    );
 
-    match client.execute(&drop_sql, &[]).await {
-        Ok(_) => {
-            logger.log(
-                logging::LogLevel::Success,
-                &format!("Successfully dropped orphaned index: {}.{}", schema_name, index_name),
-            );
-            Ok(())
-        }
-        Err(e) => {
-            logger.log(
-                logging::LogLevel::Error,
-                &format!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e),
-            );
-            Err(anyhow::anyhow!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e))
-        }
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -618,7 +588,7 @@ async fn main() -> Result<()> {
         // Before creating a task&connection check if the index is valid or not. Check for the index name if it matches PostgreSQL's temporary concurrent reindex pattern (_ccnew followed by optional numbers).
         if is_temporary_concurrent_reindex_index(&index_name) && args.clean_orphant_indexes {
             // Drop the orphaned _ccnew index
-            if let Err(e) = clean_orphant_ccnew_index(&client, &schema_name, &index_name, &logger).await {
+            if let Err(e) = index_operations::clean_orphant_ccnew_index(&client, &schema_name, &index_name, &logger).await {
                 logger.log(logging::LogLevel::Error, &format!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e));
             }
             continue;
