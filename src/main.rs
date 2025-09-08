@@ -269,6 +269,14 @@ async fn main() -> Result<()> {
         ));
     }
 
+    // Validate index size limits
+    if args.min_size_gb > args.max_size_gb {
+        return Err(anyhow::anyhow!(
+            "Minimum index size ({} GB) cannot be greater than maximum index size ({} GB). Please adjust the values.",
+            args.min_size_gb, args.max_size_gb
+        ));
+    }
+
     // Initialize logger
     let logger = logging::Logger::new(args.log_file.clone());
 
