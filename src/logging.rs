@@ -177,4 +177,11 @@ impl Logger {
             &format!("Maintenance IO concurrency: {}", maintenance_io_concurrency),
         );
     }
+
+    pub fn log_index_size_limits(&self, min_size_gb: u64, max_size_gb: u64) {
+        self.log(
+            LogLevel::Info,
+            &format!("Index size limits: minimum {} GB, maximum {} GB", min_size_gb, max_size_gb),
+        );
+    }
 }

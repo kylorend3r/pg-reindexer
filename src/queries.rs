@@ -23,7 +23,8 @@ pub const GET_INDEXES_IN_SCHEMA_WITH_TABLE: &str = r#"
     AND i.relkind = 'i'
     AND x.indisprimary = false
     AND x.indisunique = false
-    AND pg_relation_size(i.oid) < ($3::bigint*1024*1024*1024)
+    AND pg_relation_size(i.oid) >= ($3::bigint*1024*1024*1024)
+    AND pg_relation_size(i.oid) < ($4::bigint*1024*1024*1024)
     ORDER BY pg_relation_size(i.oid) ASC;
 "#;
 
@@ -43,7 +44,8 @@ pub const GET_INDEXES_IN_SCHEMA: &str = r#"
     AND i.relkind = 'i'
     AND x.indisprimary = false
     AND x.indisunique = false
-    AND pg_relation_size(i.oid) < ($2::bigint*1024*1024*1024)
+    AND pg_relation_size(i.oid) >= ($2::bigint*1024*1024*1024)
+    AND pg_relation_size(i.oid) < ($3::bigint*1024*1024*1024)
     ORDER BY pg_relation_size(i.oid) ASC;
 "#;
 

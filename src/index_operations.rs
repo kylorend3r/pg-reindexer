@@ -10,6 +10,7 @@ pub async fn get_indexes_in_schema(
     client: &tokio_postgres::Client,
     schema_name: &str,
     table_name: Option<&str>,
+    min_size_gb: u64,
     max_size_gb: u64,
 ) -> Result<Vec<IndexInfo>> {
     let query = if let Some(_table) = table_name {
@@ -20,11 +21,11 @@ pub async fn get_indexes_in_schema(
 
     let rows = if let Some(table) = table_name {
         client
-            .query(query, &[&schema_name, &table, &(max_size_gb as i64)])
+            .query(query, &[&schema_name, &table, &(min_size_gb as i64), &(max_size_gb as i64)])
             .await
     } else {
         client
-            .query(query, &[&schema_name, &(max_size_gb as i64)])
+            .query(query, &[&schema_name, &(min_size_gb as i64), &(max_size_gb as i64)])
             .await
     }
     .context("Failed to query indexes in schema")?;
