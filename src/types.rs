@@ -1,8 +1,9 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IndexInfo {
     pub schema_name: String,
     pub index_name: String,
     pub index_type: String,
+    pub table_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -35,15 +36,153 @@ impl std::fmt::Display for ReindexStatus {
     }
 }
 
-#[derive(Debug)]
-pub struct SharedTableTracker {
-    pub tables_being_reindexed: std::collections::HashSet<String>, // table_name
+#[derive(Debug, Clone, PartialEq)]
+pub enum IndexStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+    Skipped,
 }
 
-impl SharedTableTracker {
-    pub fn new() -> Self {
-        Self {
-            tables_being_reindexed: std::collections::HashSet::new(),
+impl std::fmt::Display for IndexStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IndexStatus::Pending => write!(f, "pending"),
+            IndexStatus::InProgress => write!(f, "in_progress"),
+            IndexStatus::Completed => write!(f, "completed"),
+            IndexStatus::Failed => write!(f, "failed"),
+            IndexStatus::Skipped => write!(f, "skipped"),
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct IndexEntry {
+    pub index_info: IndexInfo,
+    pub status: IndexStatus,
+    pub assigned_worker: Option<usize>,
+    pub lock_acquired_at: Option<std::time::Instant>,
+}
+
+impl IndexEntry {
+    pub fn new(index_info: IndexInfo) -> Self {
+        Self {
+            index_info,
+            status: IndexStatus::Pending,
+            assigned_worker: None,
+            lock_acquired_at: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct IndexMemoryTable {
+    pub indexes: std::collections::HashMap<String, IndexEntry>, // key: "schema.index"
+    pub table_locks: std::collections::HashMap<String, usize>, // table_name -> worker_id
+    pub worker_assignments: std::collections::HashMap<usize, Vec<String>>, // worker_id -> list of index keys
+}
+
+impl IndexMemoryTable {
+    pub fn new() -> Self {
+        Self {
+            indexes: std::collections::HashMap::new(),
+            table_locks: std::collections::HashMap::new(),
+            worker_assignments: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn add_index(&mut self, index_info: IndexInfo) {
+        let key = format!("{}.{}", index_info.schema_name, index_info.index_name);
+        let entry = IndexEntry::new(index_info);
+        self.indexes.insert(key, entry);
+    }
+
+    pub fn get_index_key(&self, schema_name: &str, index_name: &str) -> String {
+        format!("{}.{}", schema_name, index_name)
+    }
+
+    pub fn get_table_key(&self, schema_name: &str, table_name: &str) -> String {
+        format!("{}.{}", schema_name, table_name)
+    }
+
+
+    pub fn lock_table(&mut self, schema_name: &str, table_name: &str, worker_id: usize) -> bool {
+        let table_key = self.get_table_key(schema_name, table_name);
+        if self.table_locks.contains_key(&table_key) {
+            false // Table already locked
+        } else {
+            self.table_locks.insert(table_key, worker_id);
+            true // Successfully locked
+        }
+    }
+
+    pub fn unlock_table(&mut self, schema_name: &str, table_name: &str) {
+        let table_key = self.get_table_key(schema_name, table_name);
+        self.table_locks.remove(&table_key);
+    }
+
+    pub fn assign_index_to_worker(&mut self, schema_name: &str, index_name: &str, worker_id: usize) -> bool {
+        let index_key = self.get_index_key(schema_name, index_name);
+        
+        if let Some(entry) = self.indexes.get_mut(&index_key) {
+            if entry.status == IndexStatus::Pending {
+                entry.status = IndexStatus::InProgress;
+                entry.assigned_worker = Some(worker_id);
+                entry.lock_acquired_at = Some(std::time::Instant::now());
+                
+                // Track worker assignment
+                self.worker_assignments.entry(worker_id).or_insert_with(Vec::new).push(index_key.clone());
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn mark_index_completed(&mut self, schema_name: &str, index_name: &str) {
+        let index_key = self.get_index_key(schema_name, index_name);
+        if let Some(entry) = self.indexes.get_mut(&index_key) {
+            entry.status = IndexStatus::Completed;
+        }
+    }
+
+    pub fn mark_index_failed(&mut self, schema_name: &str, index_name: &str) {
+        let index_key = self.get_index_key(schema_name, index_name);
+        if let Some(entry) = self.indexes.get_mut(&index_key) {
+            entry.status = IndexStatus::Failed;
+        }
+    }
+
+    pub fn mark_index_skipped(&mut self, schema_name: &str, index_name: &str) {
+        let index_key = self.get_index_key(schema_name, index_name);
+        if let Some(entry) = self.indexes.get_mut(&index_key) {
+            entry.status = IndexStatus::Skipped;
+        }
+    }
+
+    pub fn get_pending_indexes(&self) -> Vec<&IndexEntry> {
+        self.indexes.values().filter(|entry| entry.status == IndexStatus::Pending).collect()
+    }
+
+
+    pub fn get_statistics(&self) -> (usize, usize, usize, usize, usize) {
+        let mut pending = 0;
+        let mut in_progress = 0;
+        let mut completed = 0;
+        let mut failed = 0;
+        let mut skipped = 0;
+
+        for entry in self.indexes.values() {
+            match entry.status {
+                IndexStatus::Pending => pending += 1,
+                IndexStatus::InProgress => in_progress += 1,
+                IndexStatus::Completed => completed += 1,
+                IndexStatus::Failed => failed += 1,
+                IndexStatus::Skipped => skipped += 1,
+            }
+        }
+
+        (pending, in_progress, completed, failed, skipped)
+    }
+}
+

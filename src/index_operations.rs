@@ -1,6 +1,6 @@
-use crate::deadlock::{check_and_handle_deadlock_risk, remove_table_from_tracker};
 use crate::logging;
-use crate::types::{IndexInfo, SharedTableTracker};
+use crate::types::IndexInfo;
+use crate::memory_table::SharedIndexMemoryTable;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use rand::Rng;
@@ -37,6 +37,7 @@ pub async fn get_indexes_in_schema(
             schema_name: row.get(0),
             index_name: row.get(2),
             index_type: row.get(4),
+            table_name: row.get(1),
         };
         indexes.push(index);
     }
@@ -112,184 +113,233 @@ pub async fn get_index_bloat_ratio(
     }
 }
 
-pub async fn reindex_index_with_client(
-    client: Arc<tokio_postgres::Client>,
-    schema_name: String,
-    index_name: String,
-    index_type: String,
-    index_num: usize,
-    total_indexes: usize,
+
+/// Worker function that processes indexes using the memory table for concurrency control
+pub async fn worker_with_memory_table(
+    worker_id: usize,
+    connection_string: String,
+    memory_table: Arc<SharedIndexMemoryTable>,
+    logger: Arc<logging::Logger>,
+    maintenance_work_mem_gb: u64,
+    max_parallel_maintenance_workers: u64,
+    maintenance_io_concurrency: u64,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
     skip_active_vacuums: bool,
-    shared_tracker: Arc<tokio::sync::Mutex<SharedTableTracker>>,
-    logger: Arc<logging::Logger>,
     bloat_threshold: Option<u8>,
     concurrently: bool,
 ) -> Result<()> {
+    logger.log(
+        logging::LogLevel::Info,
+        &format!("Worker {} started", worker_id),
+    );
+
+    // Create a connection for this worker
+    let client = crate::connection::create_connection_with_session_parameters(
+        &connection_string,
+        maintenance_work_mem_gb,
+        max_parallel_maintenance_workers,
+        maintenance_io_concurrency,
+    )
+    .await?;
+
+    let client = Arc::new(client);
+
+    // Process indexes until none are available
+    while memory_table.has_pending_indexes().await {
+        // Try to acquire an index
+        if let Some(index_info) = memory_table.try_acquire_index_for_worker(worker_id, &logger).await {
+            logger.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "Worker {} processing index {}.{}",
+                    worker_id, index_info.schema_name, index_info.index_name
+                ),
+            );
+
+            // Process the index
+            let result = reindex_index_with_memory_table(
+                client.clone(),
+                index_info.clone(),
+                worker_id,
+                skip_inactive_replication_slots,
+                skip_sync_replication_connection,
+                skip_active_vacuums,
+                logger.clone(),
+                bloat_threshold,
+                concurrently,
+            ).await;
+
+            // Handle the result
+            match result {
+                Ok(status) => {
+                    match status {
+                        crate::types::ReindexStatus::Success => {
+                            memory_table.release_index_and_mark_completed(
+                                &index_info.schema_name,
+                                &index_info.index_name,
+                                &index_info.table_name,
+                                worker_id,
+                                &logger,
+                            ).await;
+                        }
+                        crate::types::ReindexStatus::Skipped | 
+                        crate::types::ReindexStatus::InvalidIndex | 
+                        crate::types::ReindexStatus::BelowBloatThreshold => {
+                            memory_table.release_index_and_mark_skipped(
+                                &index_info.schema_name,
+                                &index_info.index_name,
+                                &index_info.table_name,
+                                worker_id,
+                                &logger,
+                            ).await;
+                        }
+                        _ => {
+                            memory_table.release_index_and_mark_failed(
+                                &index_info.schema_name,
+                                &index_info.index_name,
+                                &index_info.table_name,
+                                worker_id,
+                                &logger,
+                            ).await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    logger.log(
+                        logging::LogLevel::Error,
+                        &format!(
+                            "Worker {} failed to process index {}.{}: {}",
+                            worker_id, index_info.schema_name, index_info.index_name, e
+                        ),
+                    );
+                    memory_table.release_index_and_mark_failed(
+                        &index_info.schema_name,
+                        &index_info.index_name,
+                        &index_info.table_name,
+                        worker_id,
+                        &logger,
+                    ).await;
+                }
+            }
+        } else {
+            // No available indexes, wait a bit before trying again
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    logger.log(
+        logging::LogLevel::Info,
+        &format!("Worker {} completed", worker_id),
+    );
+
+    Ok(())
+}
+
+/// Reindex an index using the memory table (simplified version without shared tracker)
+pub async fn reindex_index_with_memory_table(
+    client: Arc<tokio_postgres::Client>,
+    index_info: IndexInfo,
+    worker_id: usize,
+    skip_inactive_replication_slots: bool,
+    skip_sync_replication_connection: bool,
+    skip_active_vacuums: bool,
+    logger: Arc<logging::Logger>,
+    bloat_threshold: Option<u8>,
+    concurrently: bool,
+) -> Result<crate::types::ReindexStatus> {
     logger.log_index_start(
-        index_num,
-        total_indexes,
-        &schema_name,
-        &index_name,
-        &index_type,
+        worker_id,
+        0, // We don't know total count in this context
+        &index_info.schema_name,
+        &index_info.index_name,
+        &index_info.index_type,
     );
 
     logger.log(
         logging::LogLevel::Info,
         &format!(
             "Starting pre-reindex checks for {}.{}",
-            schema_name, index_name
+            index_info.schema_name, index_info.index_name
         ),
     );
 
     // Get before size
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Getting before size for {}.{}",
-            schema_name, index_name
-        ),
-    );
-    let before_size = get_index_size(&client, &schema_name, &index_name).await?;
+    let before_size = get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
     logger.log(
         logging::LogLevel::Info,
         &format!(
             "Before size for {}.{}: {} bytes",
-            schema_name, index_name, before_size
+            index_info.schema_name, index_info.index_name, before_size
         ),
     );
 
     let reindex_sql = if concurrently {
         format!(
             "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
-            schema_name, index_name
+            index_info.schema_name, index_info.index_name
         )
     } else {
         format!(
             "REINDEX INDEX \"{}\".\"{}\"",
-            schema_name, index_name
+            index_info.schema_name, index_info.index_name
         )
     };
 
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Using {} reindexing for {}.{}",
-            if concurrently { "online (CONCURRENTLY)" } else { "offline" },
-            schema_name, index_name
-        ),
-    );
-
-    // check if the index is invalid before reindexing
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Validating index integrity for {}.{}",
-            schema_name, index_name
-        ),
-    );
-    let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Index {}.{} validity: {}",
-            schema_name, index_name, index_is_valid
-        ),
-    );
-
-    // if the index is invalid, skip the reindexing.since reindexing an invalid index will cause duplicate entries in the index.
+    // Check if the index is invalid before reindexing
+    let index_is_valid = validate_index_integrity(&client, &index_info.schema_name, &index_info.index_name).await?;
     if !index_is_valid {
         logger.log(
             logging::LogLevel::Warning,
             &format!(
                 "Index is invalid, skipping reindexing {}.{}",
-                schema_name, index_name
+                index_info.schema_name, index_info.index_name
             ),
         );
         // Save skipped record to logbook
         let index_data = crate::save::IndexData {
-            schema_name: schema_name.clone(),
-            index_name: index_name.clone(),
-            index_type: index_type.clone(),
+            schema_name: index_info.schema_name.clone(),
+            index_name: index_info.index_name.clone(),
+            index_type: index_info.index_type.clone(),
             reindex_status: crate::types::ReindexStatus::InvalidIndex,
             before_size: None,
             after_size: None,
             size_change: None,
         };
         crate::save::save_index_info(&client, &index_data).await?;
-
-        return Ok(());
+        return Ok(crate::types::ReindexStatus::InvalidIndex);
     }
 
     // Check bloat ratio if threshold is specified
     if let Some(threshold) = bloat_threshold {
-        logger.log(
-            logging::LogLevel::Info,
-            &format!(
-                "Checking bloat ratio for {}.{} (threshold: {}%)",
-                schema_name, index_name, threshold
-            ),
-        );
-        
-        let bloat_ratio = get_index_bloat_ratio(&client, &index_name).await?;
-        logger.log(
-            logging::LogLevel::Info,
-            &format!(
-                "Bloat ratio for {}.{}: {}%",
-                schema_name, index_name, bloat_ratio
-            ),
-        );
-
+        let bloat_ratio = get_index_bloat_ratio(&client, &index_info.index_name).await?;
         if bloat_ratio < threshold as f64 {
             logger.log(
                 logging::LogLevel::Info,
                 &format!(
                     "Index bloat ratio ({}%) is below threshold ({}%), skipping reindexing {}.{}",
-                    bloat_ratio, threshold, schema_name, index_name
+                    bloat_ratio, threshold, index_info.schema_name, index_info.index_name
                 ),
-            );
-            logger.log_index_skipped(
-                &schema_name,
-                &index_name,
-                &format!("Bloat ratio ({}%) below threshold ({}%)", bloat_ratio, threshold),
             );
             // Save skipped record to logbook
             let index_data = crate::save::IndexData {
-                schema_name: schema_name.clone(),
-                index_name: index_name.clone(),
-                index_type: index_type.clone(),
+                schema_name: index_info.schema_name.clone(),
+                index_name: index_info.index_name.clone(),
+                index_type: index_info.index_type.clone(),
                 reindex_status: crate::types::ReindexStatus::BelowBloatThreshold,
                 before_size: None,
                 after_size: None,
                 size_change: None,
             };
             crate::save::save_index_info(&client, &index_data).await?;
-
-            return Ok(());
-        } else {
-            logger.log(
-                logging::LogLevel::Info,
-                &format!(
-                    "Bloat ratio ({}%) is above threshold ({}%), proceeding with checks",
-                    bloat_ratio, threshold
-                ),
-            );
+            return Ok(crate::types::ReindexStatus::BelowBloatThreshold);
         }
     }
 
-    // Perform fresh reindexing checks for this thread
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Performing validation checks for {}.{} before reindexing",
-            schema_name, index_name
-        ),
-    );
-
+    // Perform fresh reindexing checks
     let reindexing_results = crate::checks::perform_reindexing_checks(&client).await?;
     
-    // Determine specific skip reason for better debugging
+    // Determine specific skip reason
     let mut skip_reasons = Vec::new();
     if reindexing_results.active_vacuum && !skip_active_vacuums {
         skip_reasons.push("active vacuum");
@@ -307,55 +357,33 @@ pub async fn reindex_index_with_client(
             logging::LogLevel::Info,
             &format!(
                 "Skipping {}.{} due to: {}",
-                schema_name, index_name, skip_reason
+                index_info.schema_name, index_info.index_name, skip_reason
             ),
-        );
-        logger.log_index_skipped(
-            &schema_name,
-            &index_name,
-            &format!("Skipped due to: {}", skip_reason),
         );
 
         // Save skipped record to logbook
         let index_data = crate::save::IndexData {
-            schema_name: schema_name.clone(),
-            index_name: index_name.clone(),
-            index_type: index_type.clone(),
+            schema_name: index_info.schema_name.clone(),
+            index_name: index_info.index_name.clone(),
+            index_type: index_info.index_type.clone(),
             reindex_status: crate::types::ReindexStatus::Skipped,
             before_size: None,
             after_size: None,
             size_change: None,
         };
         crate::save::save_index_info(&client, &index_data).await?;
-
-        return Ok(());
+        return Ok(crate::types::ReindexStatus::Skipped);
     }
 
     logger.log(
         logging::LogLevel::Info,
         &format!(
-            "All pre-reindex checks passed for {}.{}",
-            schema_name, index_name
-        ),
-    );
-
-
-    check_and_handle_deadlock_risk(&client, &schema_name, &index_name, &shared_tracker, &logger)
-        .await?;
-
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
             "Starting reindex operation for {}.{}",
-            schema_name, index_name
+            index_info.schema_name, index_info.index_name
         ),
     );
 
-    // Add random delay between 0 and 10 seconds
-    logger.log(
-        logging::LogLevel::Info,
-        &format!("Adding random delay between 0 and 5 seconds for {}.{}", schema_name, index_name),
-    );
+    // Add random delay between 1 and 5 seconds
     let artificial_delay: u32 = rand::rng().random_range(1..=5);
     thread::sleep(time::Duration::from_secs(artificial_delay as u64));
 
@@ -369,84 +397,59 @@ pub async fn reindex_index_with_client(
                 logging::LogLevel::Info,
                 &format!(
                     "Reindex SQL executed successfully for {}.{} in {:?}",
-                    schema_name, index_name, duration
+                    index_info.schema_name, index_info.index_name, duration
                 ),
             );
         }
         Err(e) => {
-            logger.log_index_failed(&schema_name, &index_name, &format!("SQL execution failed after {:?}: {}", duration, e));
+            logger.log_index_failed(&index_info.schema_name, &index_info.index_name, &format!("SQL execution failed after {:?}: {}", duration, e));
             
             // Save failed reindex record
             let index_data = crate::save::IndexData {
-                schema_name: schema_name.clone(),
-                index_name: index_name.clone(),
-                index_type: index_type.clone(),
+                schema_name: index_info.schema_name.clone(),
+                index_name: index_info.index_name.clone(),
+                index_type: index_info.index_type.clone(),
                 reindex_status: crate::types::ReindexStatus::Failed,
                 before_size: Some(before_size),
-                after_size: None, // Reindex failed, so no after size
+                after_size: None,
                 size_change: None,
             };
             crate::save::save_index_info(&client, &index_data).await?;
             
-            // Remove table from shared tracker
-            remove_table_from_tracker(&client, &schema_name, &index_name, &shared_tracker, &logger).await?;
-            
-            return Err(anyhow::anyhow!("Failed to reindex index {}.{}: {}", schema_name, index_name, e));
+            return Ok(crate::types::ReindexStatus::Failed);
         }
     }
 
     // Get after size
-    let after_size = get_index_size(&client, &schema_name, &index_name).await?;
+    let after_size = get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
     let size_change = after_size - before_size;
 
-
     thread::sleep(time::Duration::from_secs(artificial_delay as u64));
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Checking if the index is valid before saving it to logbook for {}.{}. This is the final check because the index is already reindexed.",
-            schema_name, index_name
-        ),
-    );
-    let index_is_valid = validate_index_integrity(&client, &schema_name, &index_name).await?;
-
+    
+    // Final validation
+    let index_is_valid = validate_index_integrity(&client, &index_info.schema_name, &index_info.index_name).await?;
     if !index_is_valid {
-        logger.log(
-            logging::LogLevel::Info,
-            &format!(
-                "Index validation failed for {}.{}",
-                schema_name, index_name
-            ),
-        );
-        logger.log_index_validation_failed(&schema_name, &index_name);
+        logger.log_index_validation_failed(&index_info.schema_name, &index_info.index_name);
 
         // Save failed validation record
         let index_data = crate::save::IndexData {
-            schema_name: schema_name.clone(),
-            index_name: index_name.clone(),
-            index_type: index_type.clone(),
+            schema_name: index_info.schema_name.clone(),
+            index_name: index_info.index_name.clone(),
+            index_type: index_info.index_type.clone(),
             reindex_status: crate::types::ReindexStatus::ValidationFailed,
             before_size: Some(before_size),
             after_size: Some(after_size),
             size_change: Some(size_change),
         };
         crate::save::save_index_info(&client, &index_data).await?;
-
-        return Ok(());
+        return Ok(crate::types::ReindexStatus::ValidationFailed);
     }
 
-    // save the index info
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Saving success record for {}.{}",
-            schema_name, index_name
-        ),
-    );
+    // Save success record
     let index_data = crate::save::IndexData {
-        schema_name: schema_name.clone(),
-        index_name: index_name.clone(),
-        index_type: index_type.clone(),
+        schema_name: index_info.schema_name.clone(),
+        index_name: index_info.index_name.clone(),
+        index_type: index_info.index_type.clone(),
         reindex_status: crate::types::ReindexStatus::Success,
         before_size: Some(before_size),
         after_size: Some(after_size),
@@ -454,19 +457,8 @@ pub async fn reindex_index_with_client(
     };
     crate::save::save_index_info(&client, &index_data).await?;
 
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Successfully completed reindex for {}.{}",
-            schema_name, index_name
-        ),
-    );
-    logger.log_index_success(&schema_name, &index_name);
-
-    // Remove table from shared tracker
-    remove_table_from_tracker(&client, &schema_name, &index_name, &shared_tracker, &logger).await?;
-
-    Ok(())
+    logger.log_index_success(&index_info.schema_name, &index_info.index_name);
+    Ok(crate::types::ReindexStatus::Success)
 }
 
 /// Drop a single orphaned _ccnew index after validating it's safe to drop

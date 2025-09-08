@@ -1,11 +1,10 @@
 
-use crate::connection::{create_connection_with_session_parameters, set_session_parameters};
-use crate::index_operations::{get_indexes_in_schema, reindex_index_with_client};
-use crate::types::{IndexInfo, SharedTableTracker};
+use crate::connection::set_session_parameters;
+use crate::index_operations::get_indexes_in_schema;
+use crate::types::IndexInfo;
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::{env, fs, path::Path, sync::Arc};
-use tokio::sync::Semaphore;
 use tokio_postgres::NoTls;
 
 // Application constants
@@ -13,9 +12,9 @@ const MAX_MAINTENANCE_WORK_MEM_GB: u64 = 32;
 
 mod checks;
 mod connection;
-mod deadlock;
 mod index_operations;
 mod logging;
+mod memory_table;
 mod queries;
 mod save;
 mod schema;
@@ -568,72 +567,75 @@ async fn main() -> Result<()> {
     );
     let start_time = std::time::Instant::now();
 
-    // Create a semaphore to limit concurrent operations
-    let semaphore = Arc::new(Semaphore::new(effective_threads));
     let connection_string = Arc::new(connection_string);
 
-    // Create shared table tracker
-    let shared_tracker = Arc::new(tokio::sync::Mutex::new(SharedTableTracker::new()));
+    // Create shared memory table for index management
+    let memory_table = Arc::new(memory_table::SharedIndexMemoryTable::new());
+    
+    // Initialize memory table with all indexes
+    memory_table.initialize_with_indexes(indexes.clone()).await;
 
-    // Create tasks for all indexes
+    // Create worker tasks
     let mut tasks = Vec::new();
-    let total_indexes = indexes.len();
     let logger = Arc::new(logger);
 
-    for (i, index) in indexes.iter().enumerate() {
+    // Clean orphaned _ccnew indexes if requested
+    if args.clean_orphant_indexes {
+        logger.log(
+            logging::LogLevel::Info,
+            "Cleaning orphaned _ccnew indexes...",
+        );
+        
+        for index in &indexes {
+            if is_temporary_concurrent_reindex_index(&index.index_name) {
+                if let Err(e) = index_operations::clean_orphant_ccnew_index(&client, &index.schema_name, &index.index_name, &logger).await {
+                    logger.log(logging::LogLevel::Error, &format!("Failed to drop orphaned index {}.{}: {}", index.schema_name, index.index_name, e));
+                }
+            }
+        }
+    }
+
+    // Filter out orphaned _ccnew indexes from processing
+    let filtered_indexes: Vec<_> = indexes.into_iter()
+        .filter(|index| {
+            if is_temporary_concurrent_reindex_index(&index.index_name) {
+                logger.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index.index_name));
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    // Re-initialize memory table with filtered indexes
+    memory_table.initialize_with_indexes(filtered_indexes.clone()).await;
+
+    // Create worker tasks instead of individual index tasks
+    for worker_id in 0..effective_threads {
         let connection_string = connection_string.clone();
-        let semaphore = semaphore.clone();
-        let schema_name = index.schema_name.clone();
-        let index_name = index.index_name.clone();
-        let index_type = index.index_type.clone();
-        let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
-        let skip_sync_replication_connection = args.skip_sync_replication_connection;
-        let skip_active_vacuums = args.skip_active_vacuums;
-        let shared_tracker = shared_tracker.clone();
+        let memory_table = memory_table.clone();
         let logger = logger.clone();
         let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
         let max_parallel_maintenance_workers = args.max_parallel_maintenance_workers;
         let maintenance_io_concurrency = args.maintenance_io_concurrency;
+        let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
+        let skip_sync_replication_connection = args.skip_sync_replication_connection;
+        let skip_active_vacuums = args.skip_active_vacuums;
         let bloat_threshold = args.reindex_only_bloated;
         let concurrently = args.concurrently;
 
-        // Before creating a task&connection check if the index is valid or not. Check for the index name if it matches PostgreSQL's temporary concurrent reindex pattern (_ccnew followed by optional numbers).
-        if is_temporary_concurrent_reindex_index(&index_name) && args.clean_orphant_indexes {
-            // Drop the orphaned _ccnew index
-            if let Err(e) = index_operations::clean_orphant_ccnew_index(&client, &schema_name, &index_name, &logger).await {
-                logger.log(logging::LogLevel::Error, &format!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e));
-            }
-            continue;
-        } else if is_temporary_concurrent_reindex_index(&index_name) {
-            logger.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index_name));
-            continue;
-        }
-
         let task = tokio::spawn(async move {
-            // Acquire permit from semaphore
-            let _permit = semaphore.acquire().await.unwrap();
-
-            // Create a new connection for this thread
-            let client = create_connection_with_session_parameters(
-                &connection_string,
+            index_operations::worker_with_memory_table(
+                worker_id,
+                connection_string.to_string(),
+                memory_table,
+                logger,
                 maintenance_work_mem_gb,
                 max_parallel_maintenance_workers,
                 maintenance_io_concurrency,
-            )
-            .await?;
-
-            reindex_index_with_client(
-                Arc::new(client),
-                schema_name,
-                index_name,
-                index_type,
-                i,
-                total_indexes,
                 skip_inactive_replication_slots,
                 skip_sync_replication_connection,
                 skip_active_vacuums,
-                shared_tracker,
-                logger,
                 bloat_threshold,
                 concurrently,
             )
@@ -643,85 +645,53 @@ async fn main() -> Result<()> {
         tasks.push(task);
     }
 
-    // Wait for all tasks to complete and collect results
-    let mut error_count = 0;
+    // Wait for all worker tasks to complete and collect results
+    let mut _error_count = 0;
 
-    for (i, task) in tasks.into_iter().enumerate() {
+    for (worker_id, task) in tasks.into_iter().enumerate() {
         match task.await {
             Ok(Ok(_)) => {
-                // Task completed (could be success, skipped, or validation_failed)
+                // Worker completed successfully
+                logger.log(
+                    logging::LogLevel::Info,
+                    &format!("Worker {} completed successfully", worker_id),
+                );
             }
             Ok(Err(e)) => {
-                error_count += 1;
-                eprintln!("  ✗ Task failed: {}", e);
-                
-                // Check if this is a reindex failure (which already saved a record) or other failure
-                let error_msg = e.to_string();
-                let is_reindex_failure = error_msg.contains("Failed to reindex index");
-                
-                if let Some(index_info) = indexes.get(i) {
-                    logger.log_index_failed(&index_info.schema_name, &index_info.index_name, &error_msg);
-                    
-                    // Only save a record if this is NOT a reindex failure (which already saved one)
-                    if !is_reindex_failure {
-                        if let Ok(client) = create_connection_with_session_parameters(
-                            &connection_string,
-                            args.maintenance_work_mem_gb,
-                            args.max_parallel_maintenance_workers,
-                            args.maintenance_io_concurrency,
-                        ).await {
-                            let index_data = crate::save::IndexData {
-                                schema_name: index_info.schema_name.clone(),
-                                index_name: index_info.index_name.clone(),
-                                index_type: index_info.index_type.clone(),
-                                reindex_status: crate::types::ReindexStatus::Failed,
-                                before_size: None,
-                                after_size: None,
-                                size_change: None,
-                            };
-                            if let Err(save_err) = crate::save::save_index_info(&client, &index_data).await {
-                                eprintln!("  ✗ Failed to save error record: {}", save_err);
-                            }
-                        }
-                    }
-                }
+                _error_count += 1;
+                eprintln!("  ✗ Worker {} failed: {}", worker_id, e);
+                logger.log(
+                    logging::LogLevel::Error,
+                    &format!("Worker {} failed: {}", worker_id, e),
+                );
             }
             Err(e) => {
-                error_count += 1;
-                eprintln!("  ✗ Task panicked: {}", e);
-                
-                // Try to save failed record for panicked tasks
-                if let Some(index_info) = indexes.get(i) {
-                    logger.log_index_failed(&index_info.schema_name, &index_info.index_name, &format!("Task panicked: {}", e));
-                    if let Ok(client) = create_connection_with_session_parameters(
-                        &connection_string,
-                        args.maintenance_work_mem_gb,
-                        args.max_parallel_maintenance_workers,
-                        args.maintenance_io_concurrency,
-                    ).await {
-                        let index_data = crate::save::IndexData {
-                            schema_name: index_info.schema_name.clone(),
-                            index_name: index_info.index_name.clone(),
-                            index_type: index_info.index_type.clone(),
-                            reindex_status: crate::types::ReindexStatus::Failed,
-                            before_size: None,
-                            after_size: None,
-                            size_change: None,
-                        };
-                        if let Err(save_err) = crate::save::save_index_info(&client, &index_data).await {
-                            eprintln!("  ✗ Failed to save error record: {}", save_err);
-                        }
-                    }
-                }
+                _error_count += 1;
+                eprintln!("  ✗ Worker {} panicked: {}", worker_id, e);
+                logger.log(
+                    logging::LogLevel::Error,
+                    &format!("Worker {} panicked: {}", worker_id, e),
+                );
             }
         }
     }
+
+    // Get final statistics from memory table
+    let (pending, in_progress, completed, failed, skipped) = memory_table.get_statistics().await;
+    logger.log(
+        logging::LogLevel::Info,
+        &format!(
+            "Final statistics - Pending: {}, In Progress: {}, Completed: {}, Failed: {}, Skipped: {}",
+            pending, in_progress, completed, failed, skipped
+        ),
+    );
 
     let duration = start_time.elapsed();
 
     // Create a new logger for the final message
     let final_logger = logging::Logger::new(args.log_file.clone());
-    final_logger.log_completion_message(total_indexes, error_count, duration, effective_threads);
+    let total_processed = completed + failed + skipped;
+    final_logger.log_completion_message(total_processed, failed, duration, effective_threads);
     final_logger.log(logging::LogLevel::Success, "Reindex process completed");
 
     Ok(())
