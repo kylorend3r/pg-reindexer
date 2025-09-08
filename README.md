@@ -104,7 +104,15 @@ pg-reindexer --schema public --maintenance-io-concurrency 256
 pg-reindexer --schema public --max-size-gb 10
 
 # Large indexes only (min 100GB)
-pg-reindexer --schema public --max-size-gb 100
+pg-reindexer --schema public --min-size-gb 100
+
+# Size range filtering (1GB to 50GB)
+pg-reindexer --schema public --min-size-gb 1 --max-size-gb 50
+```
+
+**Note**: The tool will log the index size limits being applied for clarity:
+```
+Index size limits: minimum 1 GB, maximum 50 GB
 ```
 
 ### 🎯 **Bloat-based Reindexing**
@@ -172,6 +180,7 @@ Options:
   -r, --skip-sync-replication-connection                Skip sync replication connection check
       --skip-active-vacuums                              Skip active vacuum check
   -m, --max-size-gb <MAX_SIZE_GB>                      Maximum index size in GB. Indexes larger than this will be excluded from reindexing [default: 1024]
+      --min-size-gb <MIN_SIZE_GB>                      Minimum index size in GB. Indexes smaller than this will be excluded from reindexing [default: 0]
   -w, --maintenance-work-mem-gb <MAINTENANCE_WORK_MEM_GB>  Maximum maintenance work mem in GB (max: 32 GB) [default: 1]
   -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2) [default: 2]
   -c, --maintenance-io-concurrency <MAINTENANCE_IO_CONCURRENCY>  Maintenance IO concurrency. Controls the number of concurrent I/O operations during maintenance operations [default: 10]
