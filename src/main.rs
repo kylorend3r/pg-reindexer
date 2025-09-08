@@ -105,6 +105,14 @@ struct Args {
     )]
     max_size_gb: u64,
 
+    /// Minimum index size in GB (default: 0 GB)
+    #[arg(
+        long,
+        default_value = "0",
+        help = "Minimum index size in GB. Indexes smaller than this will be excluded from reindexing"
+    )]
+    min_size_gb: u64,
+
     /// Maximum maintenance work mem in GB (default: 1 GB, max: 32 GB)
     #[arg(
         short = 'w',
@@ -417,22 +425,26 @@ async fn main() -> Result<()> {
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "Filtering for table '{}' (max size: {} GB)",
-                table, args.max_size_gb
+                "Filtering for table '{}' (min size: {} GB, max size: {} GB)",
+                table, args.min_size_gb, args.max_size_gb
             ),
         );
     } else {
         logger.log(
             logging::LogLevel::Info,
-            &format!("Max index size: {} GB", args.max_size_gb),
+            &format!("Index size range: {} GB - {} GB", args.min_size_gb, args.max_size_gb),
         );
     }
+
+    // Log the index size limits for clarity
+    logger.log_index_size_limits(args.min_size_gb, args.max_size_gb);
 
     // Get all indexes in the specified schema (and optionally table)
     let indexes = get_indexes_in_schema(
         &client,
         &args.schema,
         args.table.as_deref(),
+        args.min_size_gb,
         args.max_size_gb,
     )
     .await?;
