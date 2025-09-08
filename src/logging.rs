@@ -70,12 +70,6 @@ impl Logger {
         );
     }
 
-    pub fn log_index_skipped(&self, schema: &str, index: &str, reason: &str) {
-        self.log(
-            LogLevel::Warning,
-            &format!("{}.{} - {}", schema, index, reason),
-        );
-    }
 
     pub fn log_index_validation_failed(&self, schema: &str, index: &str) {
         self.log(
