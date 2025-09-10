@@ -126,10 +126,10 @@ pg-reindexer --schema public --reindex-only-bloated 15
 
 ```bash
 # Clean up orphaned _ccnew indexes before reindexing
-pg-reindexer --schema public --clean-orphant-indexes
+pg-reindexer --schema public --clean-orphaned-indexes
 
 # Combine with other operations
-pg-reindexer --schema public --clean-orphant-indexes --threads 4 --maintenance-work-mem-gb 2
+pg-reindexer --schema public --clean-orphaned-indexes --threads 4 --maintenance-work-mem-gb 2
 ```
 
 ### 🛡️ **Production Scenarios**
@@ -187,7 +187,7 @@ Options:
   -l, --log-file <LOG_FILE>                             Log file path (default: reindexer.log in current directory) [default: reindexer.log]
       --reindex-only-bloated <PERCENTAGE>               Reindex only indexes with bloat ratio above this percentage (0-100). If not specified, all indexes will be reindexed
       --concurrently                                     Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX) [default: true]
-      --clean-orphant-indexes                            Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted.
+      --clean-orphaned-indexes                            Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted.
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
