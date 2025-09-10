@@ -450,6 +450,35 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Validate that the table exists if table name is provided
+    if let Some(table) = &args.table {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Validating table '{}' exists in schema '{}'", table, args.schema),
+        );
+        
+        match schema::table_exists(&client, &args.schema, table).await {
+            Ok(exists) => {
+                if !exists {
+                    return Err(anyhow::anyhow!(
+                        "Table '{}' does not exist in schema '{}'. Please verify the table name and try again.",
+                        table, args.schema
+                    ));
+                }
+                logger.log(
+                    logging::LogLevel::Success,
+                    &format!("Table '{}' validation passed", table),
+                );
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to validate table '{}' in schema '{}': {}",
+                    table, args.schema, e
+                ));
+            }
+        }
+    }
+
     logger.log(
         logging::LogLevel::Info,
         &format!("Discovering indexes in schema '{}'", args.schema),

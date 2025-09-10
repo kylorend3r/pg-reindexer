@@ -142,3 +142,15 @@ pub const CHECK_SCHEMA_EXISTS: &str = r#"
         WHERE nspname = $1
     );
 "#;
+
+// Check if a table exists in a specific schema
+pub const CHECK_TABLE_EXISTS: &str = r#"
+    SELECT EXISTS(
+        SELECT 1 
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = $1 
+        AND n.nspname = $2
+        AND c.relkind = 'r'
+    );
+"#;
