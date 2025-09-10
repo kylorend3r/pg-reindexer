@@ -123,6 +123,7 @@ pub async fn worker_with_memory_table(
     maintenance_work_mem_gb: u64,
     max_parallel_maintenance_workers: u64,
     maintenance_io_concurrency: u64,
+    lock_timeout_seconds: u64,
     skip_inactive_replication_slots: bool,
     skip_sync_replication_connection: bool,
     skip_active_vacuums: bool,
@@ -140,6 +141,7 @@ pub async fn worker_with_memory_table(
         maintenance_work_mem_gb,
         max_parallel_maintenance_workers,
         maintenance_io_concurrency,
+        lock_timeout_seconds,
     )
     .await?;
 

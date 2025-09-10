@@ -154,6 +154,7 @@ impl Logger {
         maintenance_work_mem_gb: u64,
         max_parallel_maintenance_workers: u64,
         maintenance_io_concurrency: u64,
+        lock_timeout_seconds: u64,
     ) {
         self.log(
             LogLevel::Info,
@@ -169,6 +170,10 @@ impl Logger {
         self.log(
             LogLevel::Info,
             &format!("Maintenance IO concurrency: {}", maintenance_io_concurrency),
+        );
+        self.log(
+            LogLevel::Info,
+            &format!("Lock timeout: {} seconds", lock_timeout_seconds),
         );
     }
 
