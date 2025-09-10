@@ -133,3 +133,24 @@ pub const GET_INDEX_BLOAT_RATIO: &str = r#"
 
 // Get the current temp_file_limit setting
 pub const GET_TEMP_FILE_LIMIT: &str = "SELECT setting FROM pg_settings WHERE name='temp_file_limit'";
+
+// Check if a schema exists
+pub const CHECK_SCHEMA_EXISTS: &str = r#"
+    SELECT EXISTS(
+        SELECT 1 
+        FROM pg_namespace 
+        WHERE nspname = $1
+    );
+"#;
+
+// Check if a table exists in a specific schema
+pub const CHECK_TABLE_EXISTS: &str = r#"
+    SELECT EXISTS(
+        SELECT 1 
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = $1 
+        AND n.nspname = $2
+        AND c.relkind = 'r'
+    );
+"#;

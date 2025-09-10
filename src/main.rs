@@ -423,6 +423,62 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Validate that the schema exists before proceeding
+    logger.log(
+        logging::LogLevel::Info,
+        &format!("Validating schema '{}' exists", args.schema),
+    );
+    
+    match schema::schema_exists(&client, &args.schema).await {
+        Ok(exists) => {
+            if !exists {
+                return Err(anyhow::anyhow!(
+                    "Schema '{}' does not exist in the database. Please verify the schema name and try again.",
+                    args.schema
+                ));
+            }
+            logger.log(
+                logging::LogLevel::Success,
+                &format!("Schema '{}' validation passed", args.schema),
+            );
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to validate schema '{}': {}",
+                args.schema, e
+            ));
+        }
+    }
+
+    // Validate that the table exists if table name is provided
+    if let Some(table) = &args.table {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Validating table '{}' exists in schema '{}'", table, args.schema),
+        );
+        
+        match schema::table_exists(&client, &args.schema, table).await {
+            Ok(exists) => {
+                if !exists {
+                    return Err(anyhow::anyhow!(
+                        "Table '{}' does not exist in schema '{}'. Please verify the table name and try again.",
+                        table, args.schema
+                    ));
+                }
+                logger.log(
+                    logging::LogLevel::Success,
+                    &format!("Table '{}' validation passed", table),
+                );
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to validate table '{}' in schema '{}': {}",
+                    table, args.schema, e
+                ));
+            }
+        }
+    }
+
     logger.log(
         logging::LogLevel::Info,
         &format!("Discovering indexes in schema '{}'", args.schema),
