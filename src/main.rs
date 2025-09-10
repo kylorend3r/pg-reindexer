@@ -170,7 +170,7 @@ struct Args {
         default_value = "false",
         help = "Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted."
     )]
-    clean_orphant_indexes: bool,
+    clean_orphaned_indexes: bool,
 }
 
 fn get_password_from_pgpass(
@@ -416,7 +416,7 @@ async fn main() -> Result<()> {
     }
 
     // Clean orphaned _ccnew indexes if requested
-    if args.clean_orphant_indexes {
+    if args.clean_orphaned_indexes {
         logger.log(
             logging::LogLevel::Info,
             "Will clean orphaned _ccnew indexes during index discovery...",
@@ -588,7 +588,7 @@ async fn main() -> Result<()> {
     let logger = Arc::new(logger);
 
     // Clean orphaned _ccnew indexes if requested
-    if args.clean_orphant_indexes {
+    if args.clean_orphaned_indexes {
         logger.log(
             logging::LogLevel::Info,
             "Cleaning orphaned _ccnew indexes...",
@@ -596,7 +596,7 @@ async fn main() -> Result<()> {
         
         for index in &indexes {
             if is_temporary_concurrent_reindex_index(&index.index_name) {
-                if let Err(e) = index_operations::clean_orphant_ccnew_index(&client, &index.schema_name, &index.index_name, &logger).await {
+                if let Err(e) = index_operations::clean_orphaned_ccnew_index(&client, &index.schema_name, &index.index_name, &logger).await {
                     logger.log(logging::LogLevel::Error, &format!("Failed to drop orphaned index {}.{}: {}", index.schema_name, index.index_name, e));
                 }
             }

@@ -462,7 +462,7 @@ pub async fn reindex_index_with_memory_table(
 }
 
 /// Drop a single orphaned _ccnew index after validating it's safe to drop
-pub async fn clean_orphant_ccnew_index(
+pub async fn clean_orphaned_ccnew_index(
     client: &tokio_postgres::Client,
     schema_name: &str,
     index_name: &str,
