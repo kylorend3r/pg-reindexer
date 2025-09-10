@@ -423,6 +423,33 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Validate that the schema exists before proceeding
+    logger.log(
+        logging::LogLevel::Info,
+        &format!("Validating schema '{}' exists", args.schema),
+    );
+    
+    match schema::schema_exists(&client, &args.schema).await {
+        Ok(exists) => {
+            if !exists {
+                return Err(anyhow::anyhow!(
+                    "Schema '{}' does not exist in the database. Please verify the schema name and try again.",
+                    args.schema
+                ));
+            }
+            logger.log(
+                logging::LogLevel::Success,
+                &format!("Schema '{}' validation passed", args.schema),
+            );
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Failed to validate schema '{}': {}",
+                args.schema, e
+            ));
+        }
+    }
+
     logger.log(
         logging::LogLevel::Info,
         &format!("Discovering indexes in schema '{}'", args.schema),

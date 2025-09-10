@@ -30,3 +30,18 @@ pub async fn create_index_info_table(client: &Client) -> Result<()> {
 
     Ok(())
 }
+
+/// Check if a schema exists in the database
+pub async fn schema_exists(client: &Client, schema_name: &str) -> Result<bool> {
+    let rows = client
+        .query(crate::queries::CHECK_SCHEMA_EXISTS, &[&schema_name])
+        .await
+        .context("Failed to check if schema exists")?;
+
+    if let Some(row) = rows.first() {
+        let exists: bool = row.get(0);
+        Ok(exists)
+    } else {
+        Ok(false)
+    }
+}
