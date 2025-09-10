@@ -95,6 +95,12 @@ pg-reindexer --schema public --max-parallel-maintenance-workers 0
 
 # High IO concurrency
 pg-reindexer --schema public --maintenance-io-concurrency 256
+
+# Set lock timeout to 30 seconds
+pg-reindexer --schema public --lock-timeout-seconds 30
+
+# Disable lock timeout (default)
+pg-reindexer --schema public --lock-timeout-seconds 0
 ```
 
 ### 📊 **Size Filtering**
@@ -143,6 +149,9 @@ pg-reindexer --schema public --threads 8 --maintenance-work-mem-gb 4 --max-paral
 
 # Emergency operation (maximum safety)
 pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1 --skip-inactive-replication-slots --skip-sync-replication-connection --skip-active-vacuums
+
+# Production with lock timeout protection
+pg-reindexer --schema public --threads 2 --maintenance-work-mem-gb 2 --max-parallel-maintenance-workers 2 --lock-timeout-seconds 60
 ```
 
 
@@ -184,6 +193,7 @@ Options:
   -w, --maintenance-work-mem-gb <MAINTENANCE_WORK_MEM_GB>  Maximum maintenance work mem in GB (max: 32 GB) [default: 1]
   -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2) [default: 2]
   -c, --maintenance-io-concurrency <MAINTENANCE_IO_CONCURRENCY>  Maintenance IO concurrency. Controls the number of concurrent I/O operations during maintenance operations [default: 10]
+      --lock-timeout-seconds <LOCK_TIMEOUT_SECONDS>     Lock timeout in seconds. Set to 0 for no timeout (default). This controls how long to wait for locks before timing out. [default: 0]
   -l, --log-file <LOG_FILE>                             Log file path (default: reindexer.log in current directory) [default: reindexer.log]
       --reindex-only-bloated <PERCENTAGE>               Reindex only indexes with bloat ratio above this percentage (0-100). If not specified, all indexes will be reindexed
       --concurrently                                     Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX) [default: true]
@@ -225,6 +235,7 @@ Options:
   - `maintenance_work_mem`: Control memory allocation for index operations (max: 32 GB)
   - `maintenance_io_concurrency`: Manage concurrent I/O operations (max: 512)
   - `max_parallel_maintenance_workers`: Control parallel worker count
+  - `lock_timeout`: Control how long to wait for locks before timing out (0 = no timeout)
 - **Resource Management**: Balance performance vs. system resource consumption
 - **Smart Defaults**: Uses PostgreSQL defaults when parameters are set to 0
 

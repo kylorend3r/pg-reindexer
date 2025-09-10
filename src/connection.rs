@@ -6,6 +6,7 @@ pub async fn set_session_parameters(
     maintenance_work_mem_gb: u64,
     max_parallel_maintenance_workers: u64,
     maintenance_io_concurrency: u64,
+    lock_timeout_seconds: u64,
 ) -> Result<()> {
     // This function can be improved to set session parameters from the cli arguments.
     // For now set the session parameters to 0.
@@ -25,6 +26,16 @@ pub async fn set_session_parameters(
         .execute(crate::queries::SET_LOG_STATEMENTS, &[])
         .await
         .context("Set log_statement to 'all'.")?;
+
+    // Set lock_timeout (convert from seconds to milliseconds)
+    let lock_timeout_ms = lock_timeout_seconds * 1000;
+    client
+        .execute(
+            &format!("SET lock_timeout TO '{}ms';", lock_timeout_ms),
+            &[],
+        )
+        .await
+        .context("Set the lock_timeout.")?;
 
     // The following operation defines the maintenance work mem in GB provided by the user.
     client
@@ -117,6 +128,7 @@ pub async fn create_connection_with_session_parameters(
     maintenance_work_mem_gb: u64,
     max_parallel_maintenance_workers: u64,
     maintenance_io_concurrency: u64,
+    lock_timeout_seconds: u64,
 ) -> Result<tokio_postgres::Client> {
     // Connect to PostgreSQL
     let (client, connection) = tokio_postgres::connect(connection_string, NoTls)
@@ -136,6 +148,7 @@ pub async fn create_connection_with_session_parameters(
         maintenance_work_mem_gb,
         max_parallel_maintenance_workers,
         maintenance_io_concurrency,
+        lock_timeout_seconds,
     )
     .await?;
 

@@ -139,6 +139,14 @@ struct Args {
     )]
     maintenance_io_concurrency: u64,
 
+    /// Lock timeout in seconds (default: 0 = no timeout)
+    #[arg(
+        long,
+        default_value = "0",
+        help = "Lock timeout in seconds. Set to 0 for no timeout (default). This controls how long to wait for locks before timing out."
+    )]
+    lock_timeout_seconds: u64,
+
     /// Log file path (default: reindexer.log in current directory)
     #[arg(
         short = 'l', 
@@ -523,12 +531,14 @@ async fn main() -> Result<()> {
         args.maintenance_work_mem_gb,
         args.max_parallel_maintenance_workers,
         args.maintenance_io_concurrency,
+        args.lock_timeout_seconds,
     )
     .await?;
     logger.log_session_parameters(
         args.maintenance_work_mem_gb,
         args.max_parallel_maintenance_workers,
         args.maintenance_io_concurrency,
+        args.lock_timeout_seconds,
     );
 
     logger.log(
@@ -626,6 +636,7 @@ async fn main() -> Result<()> {
         let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
         let max_parallel_maintenance_workers = args.max_parallel_maintenance_workers;
         let maintenance_io_concurrency = args.maintenance_io_concurrency;
+        let lock_timeout_seconds = args.lock_timeout_seconds;
         let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
         let skip_sync_replication_connection = args.skip_sync_replication_connection;
         let skip_active_vacuums = args.skip_active_vacuums;
@@ -641,6 +652,7 @@ async fn main() -> Result<()> {
                 maintenance_work_mem_gb,
                 max_parallel_maintenance_workers,
                 maintenance_io_concurrency,
+                lock_timeout_seconds,
                 skip_inactive_replication_slots,
                 skip_sync_replication_connection,
                 skip_active_vacuums,
