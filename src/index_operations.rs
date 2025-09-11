@@ -3,8 +3,6 @@ use crate::types::IndexInfo;
 use crate::memory_table::SharedIndexMemoryTable;
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use rand::Rng;
-use std::{thread, time};
 
 pub async fn get_indexes_in_schema(
     client: &tokio_postgres::Client,
@@ -385,9 +383,6 @@ pub async fn reindex_index_with_memory_table(
         ),
     );
 
-    // Add random delay between 1 and 5 seconds
-    let artificial_delay: u32 = rand::rng().random_range(1..=5);
-    thread::sleep(time::Duration::from_secs(artificial_delay as u64));
 
     let start_time = std::time::Instant::now();
     let result = client.execute(&reindex_sql, &[]).await;
@@ -426,7 +421,6 @@ pub async fn reindex_index_with_memory_table(
     let after_size = get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
     let size_change = after_size - before_size;
 
-    thread::sleep(time::Duration::from_secs(artificial_delay as u64));
     
     // Final validation
     let index_is_valid = validate_index_integrity(&client, &index_info.schema_name, &index_info.index_name).await?;
