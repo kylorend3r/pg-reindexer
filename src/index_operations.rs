@@ -3,8 +3,6 @@ use crate::types::IndexInfo;
 use crate::memory_table::SharedIndexMemoryTable;
 use anyhow::{Context, Result};
 use std::sync::Arc;
-use rand::Rng;
-use std::{thread, time};
 
 pub async fn get_indexes_in_schema(
     client: &tokio_postgres::Client,
