@@ -11,12 +11,13 @@ pub struct IndexData {
     pub before_size: Option<i64>,
     pub after_size: Option<i64>,
     pub size_change: Option<i64>,
+    pub reindex_duration: Option<f32>,
 }
 
 pub async fn save_index_info(client: &Client, index_data: &IndexData) -> Result<()> {
     let query = r#"
-        INSERT INTO reindexer.reindex_logbook (schema_name, index_name, index_type, reindex_status, before_size, after_size, size_change)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO reindexer.reindex_logbook (schema_name, index_name, index_type, reindex_status, before_size, after_size, size_change, reindex_duration)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     "#;
 
     // need some details about the error.
@@ -31,6 +32,7 @@ pub async fn save_index_info(client: &Client, index_data: &IndexData) -> Result<
                 &index_data.before_size,
                 &index_data.after_size,
                 &index_data.size_change,
+                &index_data.reindex_duration,
             ],
         )
         .await;

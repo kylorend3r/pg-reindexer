@@ -254,7 +254,8 @@ CREATE TABLE reindexer.reindex_logbook (
     reindex_status VARCHAR(255) NOT NULL,
     before_size BIGINT,
     after_size BIGINT,
-    size_change BIGINT
+    size_change BIGINT,
+    reindex_duration REAL
 );
 ```
 

@@ -305,6 +305,7 @@ pub async fn reindex_index_with_memory_table(
             before_size: None,
             after_size: None,
             size_change: None,
+            reindex_duration: None,
         };
         crate::save::save_index_info(&client, &index_data).await?;
         return Ok(crate::types::ReindexStatus::InvalidIndex);
@@ -330,6 +331,7 @@ pub async fn reindex_index_with_memory_table(
                 before_size: None,
                 after_size: None,
                 size_change: None,
+                reindex_duration: None,
             };
             crate::save::save_index_info(&client, &index_data).await?;
             return Ok(crate::types::ReindexStatus::BelowBloatThreshold);
@@ -370,6 +372,7 @@ pub async fn reindex_index_with_memory_table(
             before_size: None,
             after_size: None,
             size_change: None,
+            reindex_duration: None,
         };
         crate::save::save_index_info(&client, &index_data).await?;
         return Ok(crate::types::ReindexStatus::Skipped);
@@ -410,6 +413,7 @@ pub async fn reindex_index_with_memory_table(
                 before_size: Some(before_size),
                 after_size: None,
                 size_change: None,
+                reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
             };
             crate::save::save_index_info(&client, &index_data).await?;
             
@@ -436,6 +440,7 @@ pub async fn reindex_index_with_memory_table(
             before_size: Some(before_size),
             after_size: Some(after_size),
             size_change: Some(size_change),
+            reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
         };
         crate::save::save_index_info(&client, &index_data).await?;
         return Ok(crate::types::ReindexStatus::ValidationFailed);
@@ -450,6 +455,7 @@ pub async fn reindex_index_with_memory_table(
         before_size: Some(before_size),
         after_size: Some(after_size),
         size_change: Some(size_change),
+        reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
     };
     crate::save::save_index_info(&client, &index_data).await?;
 
