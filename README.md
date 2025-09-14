@@ -166,6 +166,10 @@ export PG_PASSWORD=mypassword
 
 # Then run without connection parameters
 pg-reindexer --schema public 
+
+# Possible to set your .pgass file as anv. variable instead of PGPASS env. variable.
+
+export PGPASSFILE=.pgpass
 ```
 
 ## Command Line Interface
