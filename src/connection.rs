@@ -37,6 +37,12 @@ pub async fn set_session_parameters(
         .await
         .context("Set the lock_timeout.")?;
 
+    // Set deadlock_timeout to 1 second
+    client
+        .execute("SET deadlock_timeout TO '1s';", &[])
+        .await
+        .context("Set the deadlock_timeout.")?;
+
     // The following operation defines the maintenance work mem in GB provided by the user.
     client
         .execute(
