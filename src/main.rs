@@ -319,7 +319,15 @@ async fn main() -> Result<()> {
 
     let password = args
         .password
-        .or_else(|| env::var("PG_PASSWORD").ok())
+        .or_else(|| {
+            let env_password = env::var("PG_PASSWORD").ok();
+            // If PG_PASSWORD is set but empty, treat it as None to allow pgpass fallback
+            if env_password.as_ref().map_or(false, |p| p.is_empty()) {
+                None
+            } else {
+                env_password
+            }
+        })
         .or_else(|| get_password_from_pgpass(&host, port, &database, &username).unwrap_or(None));
 
     // Build connection string
