@@ -166,6 +166,10 @@ export PG_PASSWORD=mypassword
 
 # Then run without connection parameters
 pg-reindexer --schema public 
+
+# Possible to set your .pgass file as anv. variable instead of PGPASS env. variable.
+
+export PGPASSFILE=.pgpass
 ```
 
 ## Command Line Interface
@@ -254,7 +258,8 @@ CREATE TABLE reindexer.reindex_logbook (
     reindex_status VARCHAR(255) NOT NULL,
     before_size BIGINT,
     after_size BIGINT,
-    size_change BIGINT
+    size_change BIGINT,
+    reindex_duration REAL
 );
 ```
 
