@@ -94,31 +94,12 @@ impl Logger {
     pub fn log_completion_message(
         &self,
         total: usize,
-        failed: usize,
+        _failed: usize,
         duration: std::time::Duration,
-        threads: usize,
+        _threads: usize,
     ) {
-        self.log(LogLevel::Info, "=== REINDEX COMPLETED ===");
-        self.log(
-            LogLevel::Info,
-            &format!("Total indexes processed: {}", total),
-        );
-        if failed > 0 {
-            self.log(LogLevel::Error, &format!("Failed: {}", failed));
-        }
+        self.log(LogLevel::Info, &format!("Total indexes processed: {}", total));
         self.log(LogLevel::Info, &format!("Duration: {:.2?}", duration));
-        self.log(
-            LogLevel::Info,
-            &format!("Concurrent threads used: {}", threads),
-        );
-        self.log(
-            LogLevel::Info,
-            "For detailed results, review the reindex_logbook table:",
-        );
-        self.log(
-            LogLevel::Info,
-            "SELECT * FROM reindexer.reindex_logbook WHERE reindex_time >= NOW() - INTERVAL '1 hour' ORDER BY reindex_time DESC;",
-        );
     }
 
     pub fn log_dry_run(&self, indexes: &[crate::IndexInfo]) {

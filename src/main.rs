@@ -754,19 +754,12 @@ async fn main() -> Result<()> {
 
     // Get final statistics from memory table
     let (pending, in_progress, completed, failed, skipped) = memory_table.get_statistics().await;
-    logger.log(
-        logging::LogLevel::Info,
-        &format!(
-            "Final statistics - Pending: {}, In Progress: {}, Completed: {}, Failed: {}, Skipped: {}",
-            pending, in_progress, completed, failed, skipped
-        ),
-    );
 
     let duration = start_time.elapsed();
 
     // Create a new logger for the final message
     let final_logger = logging::Logger::new(args.log_file.clone());
-    let total_processed = completed + failed + skipped;
+    let total_processed = completed + failed + skipped + pending + in_progress;
     final_logger.log_completion_message(total_processed, failed, duration, effective_threads);
     final_logger.log(logging::LogLevel::Success, "Reindex process completed");
 
