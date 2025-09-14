@@ -1,5 +1,31 @@
 use anyhow::{Context, Result};
 use tokio_postgres::NoTls;
+use tokio_postgres_rustls::MakeRustlsConnect;
+use rustls::{ClientConfig, RootCertStore};
+
+/// SSL configuration options
+#[derive(Debug, Clone)]
+pub struct SslConfig {
+    pub enabled: bool,
+}
+
+impl Default for SslConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+        }
+    }
+}
+
+/// Create a TLS connector for PostgreSQL connections (no certificate verification)
+fn create_tls_connector() -> Result<MakeRustlsConnect> {
+    // Create a TLS config that accepts any certificate (no verification)
+    let config = ClientConfig::builder()
+        .with_root_certificates(RootCertStore::empty())
+        .with_no_client_auth();
+
+    Ok(MakeRustlsConnect::new(config))
+}
 
 pub async fn set_session_parameters(
     client: &tokio_postgres::Client,
@@ -135,18 +161,38 @@ pub async fn create_connection_with_session_parameters(
     max_parallel_maintenance_workers: u64,
     maintenance_io_concurrency: u64,
     lock_timeout_seconds: u64,
+    ssl_config: &SslConfig,
 ) -> Result<tokio_postgres::Client> {
-    // Connect to PostgreSQL
-    let (client, connection) = tokio_postgres::connect(connection_string, NoTls)
-        .await
-        .context("Failed to connect to PostgreSQL")?;
-
-    // Spawn the connection to run in the background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
+    // Connect to PostgreSQL with or without SSL
+    let client = if ssl_config.enabled {
+        let tls_connector = create_tls_connector()
+            .context("Failed to create TLS connector")?;
+        let (client, connection) = tokio_postgres::connect(connection_string, tls_connector)
+            .await
+            .context("Failed to connect to PostgreSQL with SSL")?;
+        
+        // Spawn the connection to run in the background
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+        
+        client
+    } else {
+        let (client, connection) = tokio_postgres::connect(connection_string, NoTls)
+            .await
+            .context("Failed to connect to PostgreSQL")?;
+        
+        // Spawn the connection to run in the background
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+        
+        client
+    };
 
     // Set session parameters for this connection
     set_session_parameters(

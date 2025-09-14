@@ -127,6 +127,7 @@ pub async fn worker_with_memory_table(
     skip_active_vacuums: bool,
     bloat_threshold: Option<u8>,
     concurrently: bool,
+    ssl_config: &crate::connection::SslConfig,
 ) -> Result<()> {
     logger.log(
         logging::LogLevel::Info,
@@ -140,6 +141,7 @@ pub async fn worker_with_memory_table(
         max_parallel_maintenance_workers,
         maintenance_io_concurrency,
         lock_timeout_seconds,
+        ssl_config,
     )
     .await?;
 

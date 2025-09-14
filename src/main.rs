@@ -1,5 +1,5 @@
 
-use crate::connection::set_session_parameters;
+use crate::connection::{set_session_parameters, SslConfig, create_connection_with_session_parameters};
 use crate::index_operations::get_indexes_in_schema;
 use crate::types::IndexInfo;
 use anyhow::{Context, Result};
@@ -179,6 +179,14 @@ struct Args {
         help = "Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted."
     )]
     clean_orphaned_indexes: bool,
+
+    /// Enable SSL/TLS connection to PostgreSQL (no certificate verification)
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Enable SSL/TLS connection to PostgreSQL without certificate verification"
+    )]
+    ssl: bool,
 }
 
 fn get_password_from_pgpass(
@@ -324,22 +332,58 @@ async fn main() -> Result<()> {
         connection_string.push_str(&format!(" password={}", pwd));
     }
 
+    // Add SSL mode to connection string
+    if args.ssl {
+        connection_string.push_str(" sslmode=require");
+    }
+
+    // Create SSL configuration
+    let ssl_config = SslConfig {
+        enabled: args.ssl,
+    };
+
     logger.log(
         logging::LogLevel::Info,
-        &format!("Connecting to PostgreSQL at {}:{}", host, port),
+        &format!("Connecting to PostgreSQL at {}:{} (SSL: {})", host, port, if args.ssl { "enabled" } else { "disabled" }),
     );
 
-    // Connect to PostgreSQL
-    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
+    // Connect to PostgreSQL with SSL support
+    let client = if args.ssl {
+        create_connection_with_session_parameters(
+            &connection_string,
+            args.maintenance_work_mem_gb,
+            args.max_parallel_maintenance_workers,
+            args.maintenance_io_concurrency,
+            args.lock_timeout_seconds,
+            &ssl_config,
+        )
         .await
-        .context("ERROR: Failed to connect to PostgreSQL")?;
+        .context("ERROR: Failed to connect to PostgreSQL with SSL")?
+    } else {
+        // Connect to PostgreSQL without SSL
+        let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
+            .await
+            .context("ERROR: Failed to connect to PostgreSQL")?;
 
-    // Spawn the connection to run in the background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
+        // Spawn the connection to run in the background
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+
+        // Set session parameters for this connection
+        set_session_parameters(
+            &client,
+            args.maintenance_work_mem_gb,
+            args.max_parallel_maintenance_workers,
+            args.maintenance_io_concurrency,
+            args.lock_timeout_seconds,
+        )
+        .await?;
+
+        client
+    };
 
     logger.log(
         logging::LogLevel::Success,
@@ -699,6 +743,7 @@ async fn main() -> Result<()> {
         let bloat_threshold = args.reindex_only_bloated;
         let concurrently = args.concurrently;
 
+        let ssl_config_clone = ssl_config.clone();
         let task = tokio::spawn(async move {
             index_operations::worker_with_memory_table(
                 worker_id,
@@ -714,6 +759,7 @@ async fn main() -> Result<()> {
                 skip_active_vacuums,
                 bloat_threshold,
                 concurrently,
+                &ssl_config_clone,
             )
             .await
         });
