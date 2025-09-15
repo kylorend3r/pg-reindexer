@@ -150,6 +150,7 @@ pub async fn worker_with_memory_table(
         ssl_ca_cert,
         ssl_client_cert,
         ssl_client_key,
+        &logger,
     )
     .await?;
 

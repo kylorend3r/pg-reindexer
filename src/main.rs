@@ -384,6 +384,10 @@ async fn main() -> Result<()> {
 
     // Connect to PostgreSQL with SSL support
     let client = if args.ssl {
+        logger.log(
+            logging::LogLevel::Info,
+            "Creating SSL/TLS connection to PostgreSQL",
+        );
         // Parse connection string into Config
         let mut config: Config = connection_string
             .parse()
@@ -467,6 +471,10 @@ async fn main() -> Result<()> {
 
         client
     } else {
+        logger.log(
+            logging::LogLevel::Info,
+            "Creating standard (non-SSL) connection to PostgreSQL",
+        );
         // Connect without SSL
         let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
             .await
@@ -479,6 +487,10 @@ async fn main() -> Result<()> {
             }
         });
 
+        logger.log(
+            logging::LogLevel::Success,
+            "Successfully connected to PostgreSQL with standard connection",
+        );
         client
     };
 
