@@ -53,6 +53,12 @@ pg-reindexer --schema public --table users
 
 # High-performance reindexing
 pg-reindexer --schema public --threads 8
+
+# SSL connection to remote PostgreSQL server
+pg-reindexer --schema public --host your-postgres-server.com --ssl
+
+# SSL connection with invalid certificate acceptance (testing only)
+pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-accept-invalid-certs
 ```
 
 ## Usage Examples
@@ -138,6 +144,42 @@ pg-reindexer --schema public --clean-orphaned-indexes
 pg-reindexer --schema public --clean-orphaned-indexes --threads 4 --maintenance-work-mem-gb 2
 ```
 
+### 🔒 **SSL/TLS Connections**
+
+```bash
+# Secure connection to remote PostgreSQL server
+pg-reindexer --schema public --host your-postgres-server.com --port 5432 --ssl
+
+# SSL connection with custom credentials
+pg-reindexer --schema public --host your-postgres-server.com --username myuser --password mypass --ssl
+
+# SSL connection for testing (accepts invalid certificates - INSECURE)
+pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-accept-invalid-certs
+
+# SSL connection with custom CA certificate
+pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-ca-cert /path/to/ca-cert.pem
+
+# SSL connection with client certificate authentication
+pg-reindexer --schema public --host your-postgres-server.com --ssl \
+  --ssl-client-cert /path/to/client-cert.pem \
+  --ssl-client-key /path/to/client-key.pem
+
+# SSL connection with both CA and client certificates
+pg-reindexer --schema public --host your-postgres-server.com --ssl \
+  --ssl-ca-cert /path/to/ca-cert.pem \
+  --ssl-client-cert /path/to/client-cert.pem \
+  --ssl-client-key /path/to/client-key.pem
+
+# Production SSL connection with environment variables
+export PG_HOST=your-postgres-server.com
+export PG_USER=myuser
+export PG_PASSWORD=mypass
+pg-reindexer --schema public --ssl
+
+# Local connection without SSL (default)
+pg-reindexer --schema public --host localhost
+```
+
 ### 🛡️ **Production Scenarios**
 
 ```bash
@@ -152,12 +194,16 @@ pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-paral
 
 # Production with lock timeout protection
 pg-reindexer --schema public --threads 2 --maintenance-work-mem-gb 2 --max-parallel-maintenance-workers 2 --lock-timeout-seconds 60
+
+# Production with SSL connection
+pg-reindexer --schema public --host prod-db.company.com --ssl --threads 2 --maintenance-work-mem-gb 2
 ```
 
 
 ## Environment Variables
 
 ```bash
+# Basic connection parameters
 export PG_HOST=localhost
 export PG_PORT=5432
 export PG_DATABASE=postgres
@@ -167,9 +213,31 @@ export PG_PASSWORD=mypassword
 # Then run without connection parameters
 pg-reindexer --schema public 
 
-# Possible to set your .pgass file as anv. variable instead of PGPASS env. variable.
+# SSL connection with environment variables
+export PG_HOST=your-postgres-server.com
+export PG_USER=myuser
+export PG_PASSWORD=mypass
+pg-reindexer --schema public --ssl
 
+# .pgpass file configuration
 export PGPASSFILE=.pgpass
+```
+
+### SSL Environment Variables
+
+When using SSL connections, you can combine environment variables with SSL flags:
+
+```bash
+# Set connection parameters via environment
+export PG_HOST=your-postgres-server.com
+export PG_USER=myuser
+export PG_PASSWORD=mypass
+
+# Use SSL connection
+pg-reindexer --schema public --ssl
+
+# For testing with invalid certificates (INSECURE)
+pg-reindexer --schema public --ssl --ssl-accept-invalid-certs
 ```
 
 ## Command Line Interface
@@ -202,6 +270,11 @@ Options:
       --reindex-only-bloated <PERCENTAGE>               Reindex only indexes with bloat ratio above this percentage (0-100). If not specified, all indexes will be reindexed
       --concurrently                                     Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX) [default: true]
       --clean-orphaned-indexes                            Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted.
+      --ssl                                              Enable SSL connection to PostgreSQL. When enabled, the connection will use SSL/TLS encryption.
+      --ssl-accept-invalid-certs                         Accept invalid SSL certificates (insecure). Use this only for testing or when you trust the server but have certificate issues.
+      --ssl-ca-cert <SSL_CA_CERT>                        Path to CA certificate file (.pem) for SSL connection. If not provided, uses system default certificate store.
+      --ssl-client-cert <SSL_CLIENT_CERT>                Path to client certificate file (.pem) for SSL connection. Requires --ssl-client-key.
+      --ssl-client-key <SSL_CLIENT_KEY>                  Path to client private key file (.pem) for SSL connection. Requires --ssl-client-cert.
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
@@ -242,6 +315,15 @@ Options:
   - `lock_timeout`: Control how long to wait for locks before timing out (0 = no timeout)
 - **Resource Management**: Balance performance vs. system resource consumption
 - **Smart Defaults**: Uses PostgreSQL defaults when parameters are set to 0
+
+### 🔒 **Secure Connections**
+- **SSL/TLS Support**: Encrypted connections to PostgreSQL servers using industry-standard TLS
+- **Certificate Validation**: Proper SSL certificate verification by default for secure connections
+- **Custom CA Certificates**: Support for custom Certificate Authority certificates for self-signed or private PKI
+- **Client Certificate Authentication**: Mutual TLS authentication using client certificates and private keys
+- **Testing Mode**: Optional invalid certificate acceptance for development and testing environments
+- **Flexible Configuration**: Combine SSL with environment variables and command-line parameters
+- **Production Ready**: Secure by default with proper certificate validation
 
 ## Database Schema
 

@@ -127,6 +127,11 @@ pub async fn worker_with_memory_table(
     skip_active_vacuums: bool,
     bloat_threshold: Option<u8>,
     concurrently: bool,
+    use_ssl: bool,
+    accept_invalid_certs: bool,
+    ssl_ca_cert: Option<String>,
+    ssl_client_cert: Option<String>,
+    ssl_client_key: Option<String>,
 ) -> Result<()> {
     logger.log(
         logging::LogLevel::Info,
@@ -134,12 +139,18 @@ pub async fn worker_with_memory_table(
     );
 
     // Create a connection for this worker
-    let client = crate::connection::create_connection_with_session_parameters(
+    let client = crate::connection::create_connection_with_session_parameters_ssl(
         &connection_string,
         maintenance_work_mem_gb,
         max_parallel_maintenance_workers,
         maintenance_io_concurrency,
         lock_timeout_seconds,
+        use_ssl,
+        accept_invalid_certs,
+        ssl_ca_cert,
+        ssl_client_cert,
+        ssl_client_key,
+        &logger,
     )
     .await?;
 
