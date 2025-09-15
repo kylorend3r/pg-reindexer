@@ -1,11 +1,12 @@
 
 use crate::connection::set_session_parameters;
 use crate::index_operations::get_indexes_in_schema;
-use crate::types::IndexInfo;
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::{env, fs, path::Path, sync::Arc};
-use tokio_postgres::NoTls;
+use tokio_postgres::{NoTls, config::SslMode, Config};
+use native_tls::{TlsConnector, Certificate, Identity};
+use postgres_native_tls::MakeTlsConnector;
 
 // Application constants
 const MAX_MAINTENANCE_WORK_MEM_GB: u64 = 32;
@@ -179,6 +180,43 @@ struct Args {
         help = "Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted."
     )]
     clean_orphaned_indexes: bool,
+
+    /// Enable SSL connection to PostgreSQL
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Enable SSL connection to PostgreSQL. When enabled, the connection will use SSL/TLS encryption."
+    )]
+    ssl: bool,
+
+    /// Accept invalid SSL certificates (insecure)
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Accept invalid SSL certificates (insecure). Use this only for testing or when you trust the server but have certificate issues."
+    )]
+    ssl_accept_invalid_certs: bool,
+
+    /// Path to CA certificate file for SSL connection
+    #[arg(
+        long,
+        help = "Path to CA certificate file (.pem) for SSL connection. If not provided, uses system default certificate store."
+    )]
+    ssl_ca_cert: Option<String>,
+
+    /// Path to client certificate file for SSL connection
+    #[arg(
+        long,
+        help = "Path to client certificate file (.pem) for SSL connection. Requires --ssl-client-key."
+    )]
+    ssl_client_cert: Option<String>,
+
+    /// Path to client private key file for SSL connection
+    #[arg(
+        long,
+        help = "Path to client private key file (.pem) for SSL connection. Requires --ssl-client-cert."
+    )]
+    ssl_client_key: Option<String>,
 }
 
 fn get_password_from_pgpass(
@@ -332,27 +370,129 @@ async fn main() -> Result<()> {
         connection_string.push_str(&format!(" password={}", pwd));
     }
 
-    logger.log(
-        logging::LogLevel::Info,
-        &format!("Connecting to PostgreSQL at {}:{}", host, port),
-    );
+    if args.ssl {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Connecting to PostgreSQL at {}:{} with SSL", host, port),
+        );
+    } else {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Connecting to PostgreSQL at {}:{}", host, port),
+        );
+    }
 
-    // Connect to PostgreSQL
-    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
-        .await
-        .context("ERROR: Failed to connect to PostgreSQL")?;
+    // Connect to PostgreSQL with SSL support
+    let client = if args.ssl {
+        // Parse connection string into Config
+        let mut config: Config = connection_string
+            .parse()
+            .context("Failed to parse connection string")?;
 
-    // Spawn the connection to run in the background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
+        // Set SSL mode
+        config.ssl_mode(SslMode::Require);
 
-    logger.log(
-        logging::LogLevel::Success,
-        "Successfully connected to PostgreSQL",
-    );
+        let (client, connection) = {
+            let mut tls_builder = TlsConnector::builder();
+            
+            // Handle custom CA certificate
+            if let Some(ca_cert_path) = &args.ssl_ca_cert {
+                logger.log(
+                    logging::LogLevel::Info,
+                    &format!("Loading CA certificate from: {}", ca_cert_path),
+                );
+                let ca_cert_data = fs::read(ca_cert_path)
+                    .context("Failed to read CA certificate file")?;
+                let ca_cert = Certificate::from_pem(&ca_cert_data)
+                    .context("Failed to parse CA certificate")?;
+                tls_builder.add_root_certificate(ca_cert);
+            }
+            
+            // Handle client certificate and key
+            if let (Some(client_cert_path), Some(client_key_path)) = (&args.ssl_client_cert, &args.ssl_client_key) {
+                logger.log(
+                    logging::LogLevel::Info,
+                    &format!("Loading client certificate from: {}", client_cert_path),
+                );
+                let client_cert_data = fs::read(client_cert_path)
+                    .context("Failed to read client certificate file")?;
+                
+                logger.log(
+                    logging::LogLevel::Info,
+                    &format!("Loading client key from: {}", client_key_path),
+                );
+                let client_key_data = fs::read(client_key_path)
+                    .context("Failed to read client key file")?;
+                
+                // Combine certificate and key into a single PEM for Identity
+                let mut identity_data = client_cert_data.clone();
+                identity_data.extend_from_slice(&client_key_data);
+                
+                let identity = Identity::from_pkcs12(&identity_data, "")
+                    .or_else(|_| {
+                        // Try PKCS8 format if PKCS12 fails
+                        Identity::from_pkcs8(&client_cert_data, &client_key_data)
+                    })
+                    .context("Failed to parse client certificate and key")?;
+                
+                tls_builder.identity(identity);
+            } else if args.ssl_client_cert.is_some() || args.ssl_client_key.is_some() {
+                return Err(anyhow::anyhow!(
+                    "Both --ssl-client-cert and --ssl-client-key must be provided together"
+                ));
+            }
+            
+            // Handle invalid certificate acceptance
+            if args.ssl_accept_invalid_certs {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    "SSL connection with invalid certificate acceptance enabled (insecure)",
+                );
+                tls_builder.danger_accept_invalid_certs(true);
+            }
+            
+            let tls_connector = tls_builder.build()
+                .context("Failed to create TLS connector")?;
+            
+            let tls = MakeTlsConnector::new(tls_connector);
+            config.connect(tls).await.context("ERROR: Failed to connect to PostgreSQL with SSL")?
+        };
+
+        // Spawn the connection to run in the background
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+
+        client
+    } else {
+        // Connect without SSL
+        let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
+            .await
+            .context("ERROR: Failed to connect to PostgreSQL")?;
+
+        // Spawn the connection to run in the background
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+
+        client
+    };
+
+    if args.ssl {
+        logger.log(
+            logging::LogLevel::Success,
+            "Successfully connected to PostgreSQL with SSL",
+        );
+    } else {
+        logger.log(
+            logging::LogLevel::Success,
+            "Successfully connected to PostgreSQL",
+        );
+    }
 
     // Validate thread count and parallel worker settings
     logger.log(
@@ -706,6 +846,11 @@ async fn main() -> Result<()> {
         let skip_active_vacuums = args.skip_active_vacuums;
         let bloat_threshold = args.reindex_only_bloated;
         let concurrently = args.concurrently;
+        let use_ssl = args.ssl;
+        let accept_invalid_certs = args.ssl_accept_invalid_certs;
+        let ssl_ca_cert = args.ssl_ca_cert.clone();
+        let ssl_client_cert = args.ssl_client_cert.clone();
+        let ssl_client_key = args.ssl_client_key.clone();
 
         let task = tokio::spawn(async move {
             index_operations::worker_with_memory_table(
@@ -722,6 +867,11 @@ async fn main() -> Result<()> {
                 skip_active_vacuums,
                 bloat_threshold,
                 concurrently,
+                use_ssl,
+                accept_invalid_certs,
+                ssl_ca_cert,
+                ssl_client_cert,
+                ssl_client_key,
             )
             .await
         });
