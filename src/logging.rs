@@ -17,8 +17,12 @@ impl Logger {
         Self { log_file }
     }
 
+    fn get_timestamp(&self) -> String {
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+    }
+
     pub fn log(&self, level: LogLevel, message: &str) {
-        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S");
+        let timestamp = self.get_timestamp();
         let level_str = match level {
             LogLevel::Info => "INFO",
             LogLevel::Warning => "WARN",
@@ -102,7 +106,7 @@ impl Logger {
         self.log(LogLevel::Info, &format!("Duration: {:.2?}", duration));
     }
 
-    pub fn log_dry_run(&self, indexes: &[crate::IndexInfo]) {
+    pub fn log_dry_run(&self, indexes: &[crate::types::IndexInfo]) {
         self.log(LogLevel::Info, "=== DRY RUN MODE ===");
         self.log(
             LogLevel::Info,
