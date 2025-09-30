@@ -10,11 +10,15 @@ pub async fn get_indexes_in_schema(
     table_name: Option<&str>,
     min_size_gb: u64,
     max_size_gb: u64,
+    index_type: &str,
 ) -> Result<Vec<IndexInfo>> {
-    let query = if let Some(_table) = table_name {
-        crate::queries::GET_INDEXES_IN_SCHEMA_WITH_TABLE
-    } else {
-        crate::queries::GET_INDEXES_IN_SCHEMA
+    let query = match (table_name, index_type) {
+        (Some(_), "btree") => crate::queries::GET_BTREE_INDEXES_IN_SCHEMA_WITH_TABLE,
+        (Some(_), "constraint") => crate::queries::GET_CONSTRAINT_INDEXES_IN_SCHEMA_WITH_TABLE,
+        (Some(_), _) => crate::queries::GET_INDEXES_IN_SCHEMA_WITH_TABLE, // fallback to original behavior
+        (None, "btree") => crate::queries::GET_BTREE_INDEXES_IN_SCHEMA,
+        (None, "constraint") => crate::queries::GET_CONSTRAINT_INDEXES_IN_SCHEMA,
+        (None, _) => crate::queries::GET_INDEXES_IN_SCHEMA, // fallback to original behavior
     };
 
     let rows = if let Some(table) = table_name {
@@ -132,6 +136,7 @@ pub async fn worker_with_memory_table(
     ssl_ca_cert: Option<String>,
     ssl_client_cert: Option<String>,
     ssl_client_key: Option<String>,
+    user_index_type: String,
 ) -> Result<()> {
     logger.log(
         logging::LogLevel::Info,
@@ -179,6 +184,7 @@ pub async fn worker_with_memory_table(
                 logger.clone(),
                 bloat_threshold,
                 concurrently,
+                user_index_type.clone(),
             ).await;
 
             // Handle the result
@@ -258,6 +264,7 @@ pub async fn reindex_index_with_memory_table(
     logger: Arc<logging::Logger>,
     bloat_threshold: Option<u8>,
     concurrently: bool,
+    user_index_type: String,
 ) -> Result<crate::types::ReindexStatus> {
     logger.log_index_start(
         worker_id,
@@ -311,7 +318,7 @@ pub async fn reindex_index_with_memory_table(
         let index_data = crate::save::IndexData {
             schema_name: index_info.schema_name.clone(),
             index_name: index_info.index_name.clone(),
-            index_type: index_info.index_type.clone(),
+            index_type: user_index_type.clone(),
             reindex_status: crate::types::ReindexStatus::InvalidIndex,
             before_size: None,
             after_size: None,
@@ -337,7 +344,7 @@ pub async fn reindex_index_with_memory_table(
             let index_data = crate::save::IndexData {
                 schema_name: index_info.schema_name.clone(),
                 index_name: index_info.index_name.clone(),
-                index_type: index_info.index_type.clone(),
+                index_type: user_index_type.clone(),
                 reindex_status: crate::types::ReindexStatus::BelowBloatThreshold,
                 before_size: None,
                 after_size: None,
@@ -378,7 +385,7 @@ pub async fn reindex_index_with_memory_table(
         let index_data = crate::save::IndexData {
             schema_name: index_info.schema_name.clone(),
             index_name: index_info.index_name.clone(),
-            index_type: index_info.index_type.clone(),
+            index_type: user_index_type.clone(),
             reindex_status: crate::types::ReindexStatus::Skipped,
             before_size: None,
             after_size: None,
@@ -419,7 +426,7 @@ pub async fn reindex_index_with_memory_table(
             let index_data = crate::save::IndexData {
                 schema_name: index_info.schema_name.clone(),
                 index_name: index_info.index_name.clone(),
-                index_type: index_info.index_type.clone(),
+                index_type: user_index_type.clone(),
                 reindex_status: crate::types::ReindexStatus::Failed,
                 before_size: Some(before_size),
                 after_size: None,
@@ -446,7 +453,7 @@ pub async fn reindex_index_with_memory_table(
         let index_data = crate::save::IndexData {
             schema_name: index_info.schema_name.clone(),
             index_name: index_info.index_name.clone(),
-            index_type: index_info.index_type.clone(),
+            index_type: user_index_type.clone(),
             reindex_status: crate::types::ReindexStatus::ValidationFailed,
             before_size: Some(before_size),
             after_size: Some(after_size),
@@ -461,7 +468,7 @@ pub async fn reindex_index_with_memory_table(
     let index_data = crate::save::IndexData {
         schema_name: index_info.schema_name.clone(),
         index_name: index_info.index_name.clone(),
-        index_type: index_info.index_type.clone(),
+        index_type: user_index_type.clone(),
         reindex_status: crate::types::ReindexStatus::Success,
         before_size: Some(before_size),
         after_size: Some(after_size),

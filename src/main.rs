@@ -113,6 +113,14 @@ struct Args {
     )]
     min_size_gb: u64,
 
+    /// Index type to reindex (default: btree)
+    #[arg(
+        long,
+        default_value = "btree",
+        help = "Index type to reindex: 'btree' for regular b-tree indexes, 'constraint' for primary keys and unique constraints"
+    )]
+    index_type: String,
+
     /// Maximum maintenance work mem in GB (default: 1 GB, max: 32 GB)
     #[arg(
         short = 'w',
@@ -320,6 +328,14 @@ async fn main() -> Result<()> {
         return Err(anyhow::anyhow!(
             "Minimum index size ({} GB) cannot be greater than maximum index size ({} GB). Please adjust the values.",
             args.min_size_gb, args.max_size_gb
+        ));
+    }
+
+    // Validate index type
+    if !["btree", "constraint"].contains(&args.index_type.as_str()) {
+        return Err(anyhow::anyhow!(
+            "Invalid index type '{}'. Must be one of: 'btree', 'constraint'",
+            args.index_type
         ));
     }
 
@@ -656,14 +672,14 @@ async fn main() -> Result<()> {
         logger.log(
             logging::LogLevel::Info,
             &format!(
-                "Filtering for table '{}' (min size: {} GB, max size: {} GB)",
-                table, args.min_size_gb, args.max_size_gb
+                "Filtering for table '{}' (min size: {} GB, max size: {} GB, index type: {})",
+                table, args.min_size_gb, args.max_size_gb, args.index_type
             ),
         );
     } else {
         logger.log(
             logging::LogLevel::Info,
-            &format!("Index size range: {} GB - {} GB", args.min_size_gb, args.max_size_gb),
+            &format!("Index size range: {} GB - {} GB, index type: {}", args.min_size_gb, args.max_size_gb, args.index_type),
         );
     }
 
@@ -677,6 +693,7 @@ async fn main() -> Result<()> {
         args.table.as_deref(),
         args.min_size_gb,
         args.max_size_gb,
+        &args.index_type,
     )
     .await?;
 
@@ -863,6 +880,7 @@ async fn main() -> Result<()> {
         let ssl_ca_cert = args.ssl_ca_cert.clone();
         let ssl_client_cert = args.ssl_client_cert.clone();
         let ssl_client_key = args.ssl_client_key.clone();
+        let user_index_type = args.index_type.clone();
 
         let task = tokio::spawn(async move {
             index_operations::worker_with_memory_table(
@@ -884,6 +902,7 @@ async fn main() -> Result<()> {
                 ssl_ca_cert,
                 ssl_client_cert,
                 ssl_client_key,
+                user_index_type,
             )
             .await
         });
