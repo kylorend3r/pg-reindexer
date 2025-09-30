@@ -51,6 +51,12 @@ pg-reindexer --schema public
 # Reindex indexes for a specific table
 pg-reindexer --schema public --table users
 
+# Reindex only regular b-tree indexes (default)
+pg-reindexer --schema public --index-type btree
+
+# Reindex only primary keys and unique constraints
+pg-reindexer --schema public --index-type constraint
+
 # High-performance reindexing
 pg-reindexer --schema public --threads 8
 
@@ -69,6 +75,11 @@ pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-accept-
 # Dry run (always test first!)
 pg-reindexer --schema public --dry-run
 
+# Reindex only b-tree indexes
+pg-reindexer --schema public --index-type btree
+
+# Reindex only constraints
+pg-reindexer --schema public --index-type constraint
 
 # Specific table reindexing
 pg-reindexer --schema public --table users
@@ -126,6 +137,26 @@ pg-reindexer --schema public --min-size-gb 1 --max-size-gb 50
 ```
 Index size limits: minimum 1 GB, maximum 50 GB
 ```
+
+### 🎯 **Index Type Filtering**
+
+```bash
+# Reindex only regular b-tree indexes (default)
+pg-reindexer --schema public --index-type btree
+
+# Reindex only primary keys and unique constraints
+pg-reindexer --schema public --index-type constraint
+
+# Combine with size filtering
+pg-reindexer --schema public --index-type constraint --min-size-gb 1 --max-size-gb 10
+
+# Combine with table filtering
+pg-reindexer --schema public --table users --index-type btree
+```
+
+**Index Type Options**:
+- `btree` (default): Regular b-tree indexes (excludes primary keys and unique constraints)
+- `constraint`: Primary keys and unique constraints only
 
 ### 🎯 **Bloat-based Reindexing**
 
@@ -262,6 +293,7 @@ Options:
       --skip-active-vacuums                              Skip active vacuum check
   -m, --max-size-gb <MAX_SIZE_GB>                      Maximum index size in GB. Indexes larger than this will be excluded from reindexing [default: 1024]
       --min-size-gb <MIN_SIZE_GB>                      Minimum index size in GB. Indexes smaller than this will be excluded from reindexing [default: 0]
+      --index-type <INDEX_TYPE>                        Index type to reindex: 'btree' for regular b-tree indexes, 'constraint' for primary keys and unique constraints [default: btree]
   -w, --maintenance-work-mem-gb <MAINTENANCE_WORK_MEM_GB>  Maximum maintenance work mem in GB (max: 32 GB) [default: 1]
   -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2) [default: 2]
   -c, --maintenance-io-concurrency <MAINTENANCE_IO_CONCURRENCY>  Maintenance IO concurrency. Controls the number of concurrent I/O operations during maintenance operations [default: 10]
@@ -284,9 +316,10 @@ Options:
 ### 🎯 **Granular Maintenance Control**
 - **Schema-level Reindexing**: Reindex all indexes in a specific schema for comprehensive maintenance
 - **Table-level Reindexing**: Target specific tables for focused maintenance cycles
+- **Index Type Filtering**: Choose between regular b-tree indexes or primary keys/unique constraints
 - **Flexible Scheduling**: Create different maintenance strategies for different schemas/tables
 - **B-tree Focus**: Optimized for the most common index type in PostgreSQL
-- **Constraint Awareness**: Automatically skips primary keys and unique constraints.
+- **Constraint Awareness**: Target primary keys and unique constraints separately from regular indexes
 
 ### ⚡ **Concurrent Operations with Safety**
 - **Flexible Reindexing Modes**: Choose between online (`REINDEX INDEX CONCURRENTLY`) or offline (`REINDEX INDEX`) reindexing
