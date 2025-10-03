@@ -3,7 +3,7 @@ use crate::connection::set_session_parameters;
 use crate::index_operations::get_indexes_in_schema;
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::{env, fs, path::Path, sync::Arc};
+use std::{collections::HashSet, env, fs, path::Path, sync::Arc};
 use tokio_postgres::{NoTls, config::SslMode, Config};
 use native_tls::{TlsConnector, Certificate, Identity};
 use postgres_native_tls::MakeTlsConnector;
@@ -225,6 +225,13 @@ struct Args {
         help = "Path to client private key file (.pem) for SSL connection. Requires --ssl-client-cert."
     )]
     ssl_client_key: Option<String>,
+
+    /// Comma-separated list of index names to exclude from reindexing
+    #[arg(
+        long,
+        help = "Comma-separated list of index names to exclude from reindexing. These indexes will be skipped even if they match other selection criteria."
+    )]
+    exclude_indexes: Option<String>,
 }
 
 fn get_password_from_pgpass(
@@ -697,6 +704,24 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    // Parse exclude-indexes if provided
+    let excluded_indexes: HashSet<String> = if let Some(exclude_list) = &args.exclude_indexes {
+        exclude_list
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    if !excluded_indexes.is_empty() {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Excluding {} indexes from reindexing: {}", excluded_indexes.len(), args.exclude_indexes.as_ref().unwrap()),
+        );
+    }
+
     if indexes.is_empty() {
         if let Some(table) = &args.table {
             logger.log(
@@ -822,9 +847,6 @@ async fn main() -> Result<()> {
 
     // Create shared memory table for index management
     let memory_table = Arc::new(memory_table::SharedIndexMemoryTable::new());
-    
-    // Initialize memory table with all indexes
-    memory_table.initialize_with_indexes(indexes.clone()).await;
 
     // Create worker tasks
     let mut tasks = Vec::new();
@@ -846,15 +868,44 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Filter out orphaned _ccnew indexes from processing
+    // Save excluded indexes to logbook before filtering them out
+    for index in &indexes {
+        if excluded_indexes.contains(&index.index_name) {
+            logger.log(logging::LogLevel::Info, &format!("Excluding index from reindexing: {}", index.index_name));
+            
+            // Save excluded index to logbook
+            let index_data = crate::save::IndexData {
+                schema_name: index.schema_name.clone(),
+                index_name: index.index_name.clone(),
+                index_type: args.index_type.clone(),
+                reindex_status: crate::types::ReindexStatus::Excluded,
+                before_size: None,
+                after_size: None,
+                size_change: None,
+                reindex_duration: None,
+            };
+            
+            if let Err(e) = crate::save::save_index_info(&client, &index_data).await {
+                logger.log(logging::LogLevel::Error, &format!("Failed to save excluded index info for {}.{}: {}", index.schema_name, index.index_name, e));
+            }
+        }
+    }
+
+    // Filter out excluded indexes and orphaned _ccnew indexes from processing
     let filtered_indexes: Vec<_> = indexes.into_iter()
         .filter(|index| {
+            // Check if index is in exclude list
+            if excluded_indexes.contains(&index.index_name) {
+                return false;
+            }
+            
+            // Check if index is a temporary concurrent reindex index
             if is_temporary_concurrent_reindex_index(&index.index_name) {
                 logger.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index.index_name));
-                false
-            } else {
-                true
+                return false;
             }
+            
+            true
         })
         .collect();
 
