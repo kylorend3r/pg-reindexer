@@ -57,6 +57,9 @@ pg-reindexer --schema public --index-type btree
 # Reindex only primary keys and unique constraints
 pg-reindexer --schema public --index-type constraint
 
+# Exclude specific indexes from reindexing
+pg-reindexer --schema public --exclude-indexes "idx_users_email,idx_orders_created_at"
+
 # High-performance reindexing
 pg-reindexer --schema public --threads 8
 
@@ -307,6 +310,7 @@ Options:
       --ssl-ca-cert <SSL_CA_CERT>                        Path to CA certificate file (.pem) for SSL connection. If not provided, uses system default certificate store.
       --ssl-client-cert <SSL_CLIENT_CERT>                Path to client certificate file (.pem) for SSL connection. Requires --ssl-client-key.
       --ssl-client-key <SSL_CLIENT_KEY>                  Path to client private key file (.pem) for SSL connection. Requires --ssl-client-cert.
+      --exclude-indexes <EXCLUDE_INDEXES>                Comma-separated list of index names to exclude from reindexing. These indexes will be skipped even if they match other selection criteria.
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
@@ -317,6 +321,7 @@ Options:
 - **Schema-level Reindexing**: Reindex all indexes in a specific schema for comprehensive maintenance
 - **Table-level Reindexing**: Target specific tables for focused maintenance cycles
 - **Index Type Filtering**: Choose between regular b-tree indexes or primary keys/unique constraints
+- **Index Exclusion**: Exclude specific indexes from reindexing using comma-separated lists
 - **Flexible Scheduling**: Create different maintenance strategies for different schemas/tables
 - **B-tree Focus**: Optimized for the most common index type in PostgreSQL
 - **Constraint Awareness**: Target primary keys and unique constraints separately from regular indexes
@@ -386,6 +391,7 @@ CREATE TABLE reindexer.reindex_logbook (
 - `skipped`: Index was skipped due to active vacuum, inactive replication slots, or sync replication
 - `below_bloat_threshold`: Index was skipped because its bloat ratio was below the specified threshold
 - `invalid_index`: Index was skipped because it was found to be invalid
+- `excluded`: Index was excluded from reindexing via the `--exclude-indexes` parameter
 
 ## License
 
