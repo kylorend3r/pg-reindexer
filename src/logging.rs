@@ -18,7 +18,9 @@ impl Logger {
     }
 
     fn get_timestamp(&self) -> String {
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+        chrono::Utc::now()
+            .format("%Y-%m-%d %H:%M:%S%.3f")
+            .to_string()
     }
 
     pub fn log(&self, level: LogLevel, message: &str) {
@@ -66,14 +68,12 @@ impl Logger {
         );
     }
 
-
     pub fn log_index_success(&self, schema: &str, index: &str) {
         self.log(
             LogLevel::Success,
             &format!("Reindexed {}.{} successfully", schema, index),
         );
     }
-
 
     pub fn log_index_validation_failed(&self, schema: &str, index: &str) {
         self.log(
@@ -88,10 +88,7 @@ impl Logger {
     pub fn log_index_failed(&self, schema: &str, index: &str, reason: &str) {
         self.log(
             LogLevel::Error,
-            &format!(
-                "{}.{} - Reindex failed: {}",
-                schema, index, reason
-            ),
+            &format!("{}.{} - Reindex failed: {}", schema, index, reason),
         );
     }
 
@@ -102,7 +99,10 @@ impl Logger {
         duration: std::time::Duration,
         _threads: usize,
     ) {
-        self.log(LogLevel::Info, &format!("Total indexes processed: {}", total));
+        self.log(
+            LogLevel::Info,
+            &format!("Total indexes processed: {}", total),
+        );
         self.log(LogLevel::Info, &format!("Duration: {:.2?}", duration));
     }
 
@@ -165,7 +165,10 @@ impl Logger {
     pub fn log_index_size_limits(&self, min_size_gb: u64, max_size_gb: u64) {
         self.log(
             LogLevel::Info,
-            &format!("Index size limits: minimum {} GB, maximum {} GB", min_size_gb, max_size_gb),
+            &format!(
+                "Index size limits: minimum {} GB, maximum {} GB",
+                min_size_gb, max_size_gb
+            ),
         );
     }
 }

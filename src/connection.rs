@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use tokio_postgres::{NoTls, config::SslMode, Config};
-use native_tls::{TlsConnector, Certificate, Identity};
+use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use std::fs;
+use tokio_postgres::{Config, NoTls, config::SslMode};
 
 pub async fn set_session_parameters(
     client: &tokio_postgres::Client,
@@ -160,51 +160,57 @@ pub async fn create_connection_with_session_parameters_ssl(
 
         let (client, connection) = {
             let mut tls_builder = TlsConnector::builder();
-            
+
             // Handle custom CA certificate
             if let Some(ca_cert_path) = &ssl_ca_cert {
-                let ca_cert_data = fs::read(ca_cert_path)
-                    .context("Failed to read CA certificate file")?;
+                let ca_cert_data =
+                    fs::read(ca_cert_path).context("Failed to read CA certificate file")?;
                 let ca_cert = Certificate::from_pem(&ca_cert_data)
                     .context("Failed to parse CA certificate")?;
                 tls_builder.add_root_certificate(ca_cert);
             }
-            
+
             // Handle client certificate and key
-            if let (Some(client_cert_path), Some(client_key_path)) = (&ssl_client_cert, &ssl_client_key) {
-                let client_cert_data = fs::read(client_cert_path)
-                    .context("Failed to read client certificate file")?;
-                let client_key_data = fs::read(client_key_path)
-                    .context("Failed to read client key file")?;
-                
+            if let (Some(client_cert_path), Some(client_key_path)) =
+                (&ssl_client_cert, &ssl_client_key)
+            {
+                let client_cert_data =
+                    fs::read(client_cert_path).context("Failed to read client certificate file")?;
+                let client_key_data =
+                    fs::read(client_key_path).context("Failed to read client key file")?;
+
                 // Combine certificate and key into a single PEM for Identity
                 let mut identity_data = client_cert_data.clone();
                 identity_data.extend_from_slice(&client_key_data);
-                
+
                 let identity = Identity::from_pkcs12(&identity_data, "")
                     .or_else(|_| {
                         // Try PKCS8 format if PKCS12 fails
                         Identity::from_pkcs8(&client_cert_data, &client_key_data)
                     })
                     .context("Failed to parse client certificate and key")?;
-                
+
                 tls_builder.identity(identity);
             } else if ssl_client_cert.is_some() || ssl_client_key.is_some() {
                 return Err(anyhow::anyhow!(
                     "Both ssl_client_cert and ssl_client_key must be provided together"
                 ));
             }
-            
+
             // Handle invalid certificate acceptance
             if accept_invalid_certs {
                 tls_builder.danger_accept_invalid_certs(true);
             }
-            
-            let tls_connector = tls_builder.build()
+
+            let tls_connector = tls_builder
+                .build()
                 .context("Failed to create TLS connector")?;
-            
+
             let tls = MakeTlsConnector::new(tls_connector);
-            config.connect(tls).await.context("Failed to connect to PostgreSQL with SSL")?
+            config
+                .connect(tls)
+                .await
+                .context("Failed to connect to PostgreSQL with SSL")?
         };
 
         // Spawn the connection to run in the background

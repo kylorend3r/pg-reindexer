@@ -81,7 +81,7 @@ impl IndexEntry {
 #[derive(Debug)]
 pub struct IndexMemoryTable {
     pub indexes: std::collections::HashMap<String, IndexEntry>, // key: "schema.index"
-    pub table_locks: std::collections::HashMap<String, usize>, // table_name -> worker_id
+    pub table_locks: std::collections::HashMap<String, usize>,  // table_name -> worker_id
     pub worker_assignments: std::collections::HashMap<usize, Vec<String>>, // worker_id -> list of index keys
 }
 
@@ -108,14 +108,13 @@ impl IndexMemoryTable {
         format!("{}.{}", schema_name, table_name)
     }
 
-
     pub fn lock_table(&mut self, schema_name: &str, table_name: &str, worker_id: usize) -> bool {
         let table_key = self.get_table_key(schema_name, table_name);
-        if self.table_locks.contains_key(&table_key) {
-            false // Table already locked
-        } else {
-            self.table_locks.insert(table_key, worker_id);
+        if let std::collections::hash_map::Entry::Vacant(e) = self.table_locks.entry(table_key) {
+            e.insert(worker_id);
             true // Successfully locked
+        } else {
+            false // Table already locked
         }
     }
 
@@ -124,19 +123,27 @@ impl IndexMemoryTable {
         self.table_locks.remove(&table_key);
     }
 
-    pub fn assign_index_to_worker(&mut self, schema_name: &str, index_name: &str, worker_id: usize) -> bool {
+    pub fn assign_index_to_worker(
+        &mut self,
+        schema_name: &str,
+        index_name: &str,
+        worker_id: usize,
+    ) -> bool {
         let index_key = self.get_index_key(schema_name, index_name);
-        
-        if let Some(entry) = self.indexes.get_mut(&index_key) {
-            if entry.status == IndexStatus::Pending {
-                entry.status = IndexStatus::InProgress;
-                entry.assigned_worker = Some(worker_id);
-                entry.lock_acquired_at = Some(std::time::Instant::now());
-                
-                // Track worker assignment
-                self.worker_assignments.entry(worker_id).or_insert_with(Vec::new).push(index_key.clone());
-                return true;
-            }
+
+        if let Some(entry) = self.indexes.get_mut(&index_key)
+            && entry.status == IndexStatus::Pending
+        {
+            entry.status = IndexStatus::InProgress;
+            entry.assigned_worker = Some(worker_id);
+            entry.lock_acquired_at = Some(std::time::Instant::now());
+
+            // Track worker assignment
+            self.worker_assignments
+                .entry(worker_id)
+                .or_default()
+                .push(index_key.clone());
+            return true;
         }
         false
     }
@@ -163,9 +170,11 @@ impl IndexMemoryTable {
     }
 
     pub fn get_pending_indexes(&self) -> Vec<&IndexEntry> {
-        self.indexes.values().filter(|entry| entry.status == IndexStatus::Pending).collect()
+        self.indexes
+            .values()
+            .filter(|entry| entry.status == IndexStatus::Pending)
+            .collect()
     }
-
 
     pub fn get_statistics(&self) -> (usize, usize, usize, usize, usize) {
         let mut pending = 0;
@@ -187,4 +196,3 @@ impl IndexMemoryTable {
         (pending, in_progress, completed, failed, skipped)
     }
 }
-

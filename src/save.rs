@@ -1,6 +1,6 @@
+use crate::types::ReindexStatus;
 use anyhow::Result;
 use tokio_postgres::Client;
-use crate::types::ReindexStatus;
 
 #[derive(Debug, Clone)]
 pub struct IndexData {

@@ -1,12 +1,11 @@
-
 use crate::connection::set_session_parameters;
 use crate::index_operations::get_indexes_in_schema;
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::{collections::HashSet, env, fs, path::Path, sync::Arc};
-use tokio_postgres::{NoTls, config::SslMode, Config};
-use native_tls::{TlsConnector, Certificate, Identity};
+use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
+use std::{collections::HashSet, env, fs, path::Path, sync::Arc};
+use tokio_postgres::{Config, NoTls, config::SslMode};
 
 // Application constants
 const MAX_MAINTENANCE_WORK_MEM_GB: u64 = 32;
@@ -54,27 +53,26 @@ struct Args {
 
     /// Dry run - show what would be reindexed without actually doing it
     #[arg(
-        short = 'f', 
-        long, 
-        default_value = "false", 
+        short = 'f',
+        long,
+        default_value = "false",
         help = "Dry run - show what would be reindexed without actually doing it"
     )]
     dry_run: bool,
 
     /// Number of concurrent threads for reindexing (default: 2, max: 32)
     #[arg(
-        short = 'n', 
-        long, 
-        default_value = "2", 
+        short = 'n',
+        long,
+        default_value = "2",
         help = "Number of concurrent threads for reindexing. If set to 1, it will reindex indexes one by one to avoid conflicts."
     )]
     threads: usize,
 
-
     /// Skip inactive replication slots check
     #[arg(
-        short = 'i', 
-        long, 
+        short = 'i',
+        long,
         default_value = "false",
         help = "Skip checking inactive replication slots(pg_replication_slots). If there is an inactive replication slot it may cause WAL files to be kept in the WAL directory or slot can miss some WAL files due to limitation if exists."
     )]
@@ -82,15 +80,16 @@ struct Args {
 
     /// Skip sync replication connection check
     #[arg(
-        short = 'r', 
-        long, 
-        default_value = "false", 
-        help = "Skip checking sync replication connection/slot status. If there is a sync replication instance, it will be skipped.")]
+        short = 'r',
+        long,
+        default_value = "false",
+        help = "Skip checking sync replication connection/slot status. If there is a sync replication instance, it will be skipped."
+    )]
     skip_sync_replication_connection: bool,
 
     /// Skip active vacuum check
     #[arg(
-        long, 
+        long,
         default_value = "false",
         help = "Skip checking active vacuum processes. If there is an active vacuum process, it will be skipped."
     )]
@@ -158,9 +157,9 @@ struct Args {
 
     /// Log file path (default: reindexer.log in current directory)
     #[arg(
-        short = 'l', 
-        long, 
-        default_value = "reindexer.log", 
+        short = 'l',
+        long,
+        default_value = "reindexer.log",
         help = "Log file path. If not specified it will use the current directory with the name reindexer.log"
     )]
     log_file: String,
@@ -280,7 +279,7 @@ fn get_password_from_pgpass(
         // Use wildcard matching (empty or '*' means match any)
         let host_matches = file_host.is_empty() || file_host == "*" || file_host == host;
         let port_matches =
-            file_port.is_empty() || file_port == "*" || file_port == &port.to_string();
+            file_port.is_empty() || file_port == "*" || file_port == port.to_string();
         let database_matches =
             file_database.is_empty() || file_database == "*" || file_database == database;
         let username_matches =
@@ -306,27 +305,26 @@ fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
     }
 }
 
-
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Validate bloat threshold if provided
-    if let Some(threshold) = args.reindex_only_bloated {
-        if threshold > 100 {
-            return Err(anyhow::anyhow!(
-                "Bloat threshold ({}) must be between 0 and 100",
-                threshold
-            ));
-        }
+    if let Some(threshold) = args.reindex_only_bloated
+        && threshold > 100
+    {
+        return Err(anyhow::anyhow!(
+            "Bloat threshold ({}) must be between 0 and 100",
+            threshold
+        ));
     }
 
     // Validate maintenance work mem limit
     if args.maintenance_work_mem_gb > MAX_MAINTENANCE_WORK_MEM_GB {
         return Err(anyhow::anyhow!(
             "Maintenance work mem ({}) exceeds maximum limit of {} GB. Please reduce the value.",
-            args.maintenance_work_mem_gb, MAX_MAINTENANCE_WORK_MEM_GB
+            args.maintenance_work_mem_gb,
+            MAX_MAINTENANCE_WORK_MEM_GB
         ));
     }
 
@@ -334,7 +332,8 @@ async fn main() -> Result<()> {
     if args.min_size_gb > args.max_size_gb {
         return Err(anyhow::anyhow!(
             "Minimum index size ({} GB) cannot be greater than maximum index size ({} GB). Please adjust the values.",
-            args.min_size_gb, args.max_size_gb
+            args.min_size_gb,
+            args.max_size_gb
         ));
     }
 
@@ -375,7 +374,7 @@ async fn main() -> Result<()> {
         .or_else(|| {
             let env_password = env::var("PG_PASSWORD").ok();
             // If PG_PASSWORD is set but empty, treat it as None to allow pgpass fallback
-            if env_password.as_ref().map_or(false, |p| p.is_empty()) {
+            if env_password.as_ref().is_some_and(|p| p.is_empty()) {
                 None
             } else {
                 env_password
@@ -421,54 +420,56 @@ async fn main() -> Result<()> {
 
         let (client, connection) = {
             let mut tls_builder = TlsConnector::builder();
-            
+
             // Handle custom CA certificate
             if let Some(ca_cert_path) = &args.ssl_ca_cert {
                 logger.log(
                     logging::LogLevel::Info,
                     &format!("Loading CA certificate from: {}", ca_cert_path),
                 );
-                let ca_cert_data = fs::read(ca_cert_path)
-                    .context("Failed to read CA certificate file")?;
+                let ca_cert_data =
+                    fs::read(ca_cert_path).context("Failed to read CA certificate file")?;
                 let ca_cert = Certificate::from_pem(&ca_cert_data)
                     .context("Failed to parse CA certificate")?;
                 tls_builder.add_root_certificate(ca_cert);
             }
-            
+
             // Handle client certificate and key
-            if let (Some(client_cert_path), Some(client_key_path)) = (&args.ssl_client_cert, &args.ssl_client_key) {
+            if let (Some(client_cert_path), Some(client_key_path)) =
+                (&args.ssl_client_cert, &args.ssl_client_key)
+            {
                 logger.log(
                     logging::LogLevel::Info,
                     &format!("Loading client certificate from: {}", client_cert_path),
                 );
-                let client_cert_data = fs::read(client_cert_path)
-                    .context("Failed to read client certificate file")?;
-                
+                let client_cert_data =
+                    fs::read(client_cert_path).context("Failed to read client certificate file")?;
+
                 logger.log(
                     logging::LogLevel::Info,
                     &format!("Loading client key from: {}", client_key_path),
                 );
-                let client_key_data = fs::read(client_key_path)
-                    .context("Failed to read client key file")?;
-                
+                let client_key_data =
+                    fs::read(client_key_path).context("Failed to read client key file")?;
+
                 // Combine certificate and key into a single PEM for Identity
                 let mut identity_data = client_cert_data.clone();
                 identity_data.extend_from_slice(&client_key_data);
-                
+
                 let identity = Identity::from_pkcs12(&identity_data, "")
                     .or_else(|_| {
                         // Try PKCS8 format if PKCS12 fails
                         Identity::from_pkcs8(&client_cert_data, &client_key_data)
                     })
                     .context("Failed to parse client certificate and key")?;
-                
+
                 tls_builder.identity(identity);
             } else if args.ssl_client_cert.is_some() || args.ssl_client_key.is_some() {
                 return Err(anyhow::anyhow!(
                     "Both --ssl-client-cert and --ssl-client-key must be provided together"
                 ));
             }
-            
+
             // Handle invalid certificate acceptance
             if args.ssl_accept_invalid_certs {
                 logger.log(
@@ -477,12 +478,16 @@ async fn main() -> Result<()> {
                 );
                 tls_builder.danger_accept_invalid_certs(true);
             }
-            
-            let tls_connector = tls_builder.build()
+
+            let tls_connector = tls_builder
+                .build()
                 .context("Failed to create TLS connector")?;
-            
+
             let tls = MakeTlsConnector::new(tls_connector);
-            config.connect(tls).await.context("ERROR: Failed to connect to PostgreSQL with SSL")?
+            config
+                .connect(tls)
+                .await
+                .context("ERROR: Failed to connect to PostgreSQL with SSL")?
         };
 
         // Spawn the connection to run in the background
@@ -594,16 +599,21 @@ async fn main() -> Result<()> {
 
     // Get the current temp_file_limit setting and check if it's limited or not.
     // Warn the user if it's limited.
-    let temp_file_limit = client.query(queries::GET_TEMP_FILE_LIMIT, &[]).await.context("Failed to get temp_file_limit setting")?;
+    let temp_file_limit = client
+        .query(queries::GET_TEMP_FILE_LIMIT, &[])
+        .await
+        .context("Failed to get temp_file_limit setting")?;
     let temp_file_limit_str: String = temp_file_limit.first().unwrap().get(0);
     let temp_file_limit: i128 = temp_file_limit_str
         .parse()
         .context("Failed to parse temp_file_limit value")?;
-    if !(temp_file_limit == -1) {
+    if temp_file_limit != -1 {
         logger.log(logging::LogLevel::Warning, "Temp file limit is limited at database level. This may cause reindexing to fail at some point.Ensure you have set a proper temp_file_limit in your postgresql.conf file.");
-    }
-    else {
-        logger.log(logging::LogLevel::Success, "Temp file limit is not limited at database level.");
+    } else {
+        logger.log(
+            logging::LogLevel::Success,
+            "Temp file limit is not limited at database level.",
+        );
     }
 
     // Clean orphaned _ccnew indexes if requested
@@ -619,7 +629,7 @@ async fn main() -> Result<()> {
         logging::LogLevel::Info,
         &format!("Validating schema '{}' exists", args.schema),
     );
-    
+
     match schema::schema_exists(&client, &args.schema).await {
         Ok(exists) => {
             if !exists {
@@ -636,7 +646,8 @@ async fn main() -> Result<()> {
         Err(e) => {
             return Err(anyhow::anyhow!(
                 "Failed to validate schema '{}': {}",
-                args.schema, e
+                args.schema,
+                e
             ));
         }
     }
@@ -645,15 +656,19 @@ async fn main() -> Result<()> {
     if let Some(table) = &args.table {
         logger.log(
             logging::LogLevel::Info,
-            &format!("Validating table '{}' exists in schema '{}'", table, args.schema),
+            &format!(
+                "Validating table '{}' exists in schema '{}'",
+                table, args.schema
+            ),
         );
-        
+
         match schema::table_exists(&client, &args.schema, table).await {
             Ok(exists) => {
                 if !exists {
                     return Err(anyhow::anyhow!(
                         "Table '{}' does not exist in schema '{}'. Please verify the table name and try again.",
-                        table, args.schema
+                        table,
+                        args.schema
                     ));
                 }
                 logger.log(
@@ -664,7 +679,9 @@ async fn main() -> Result<()> {
             Err(e) => {
                 return Err(anyhow::anyhow!(
                     "Failed to validate table '{}' in schema '{}': {}",
-                    table, args.schema, e
+                    table,
+                    args.schema,
+                    e
                 ));
             }
         }
@@ -686,7 +703,10 @@ async fn main() -> Result<()> {
     } else {
         logger.log(
             logging::LogLevel::Info,
-            &format!("Index size range: {} GB - {} GB, index type: {}", args.min_size_gb, args.max_size_gb, args.index_type),
+            &format!(
+                "Index size range: {} GB - {} GB, index type: {}",
+                args.min_size_gb, args.max_size_gb, args.index_type
+            ),
         );
     }
 
@@ -718,7 +738,11 @@ async fn main() -> Result<()> {
     if !excluded_indexes.is_empty() {
         logger.log(
             logging::LogLevel::Info,
-            &format!("Excluding {} indexes from reindexing: {}", excluded_indexes.len(), args.exclude_indexes.as_ref().unwrap()),
+            &format!(
+                "Excluding {} indexes from reindexing: {}",
+                excluded_indexes.len(),
+                args.exclude_indexes.as_ref().unwrap()
+            ),
         );
     }
 
@@ -774,7 +798,10 @@ async fn main() -> Result<()> {
     if let Some(threshold) = args.reindex_only_bloated {
         logger.log(
             logging::LogLevel::Info,
-            &format!("Bloat threshold enabled: only reindexing indexes with bloat ratio >= {}%", threshold),
+            &format!(
+                "Bloat threshold enabled: only reindexing indexes with bloat ratio >= {}%",
+                threshold
+            ),
         );
     }
 
@@ -821,7 +848,10 @@ async fn main() -> Result<()> {
     );
 
     // Note: Per-thread checks will be performed when each thread starts
-    logger.log(logging::LogLevel::Info, "Per-thread checks will be performed when each thread starts");
+    logger.log(
+        logging::LogLevel::Info,
+        "Per-thread checks will be performed when each thread starts",
+    );
 
     // Adjust thread count if table name is provided
     let effective_threads = if args.table.is_some() {
@@ -858,12 +888,24 @@ async fn main() -> Result<()> {
             logging::LogLevel::Info,
             "Cleaning orphaned _ccnew indexes...",
         );
-        
+
         for index in &indexes {
-            if is_temporary_concurrent_reindex_index(&index.index_name) {
-                if let Err(e) = index_operations::clean_orphaned_ccnew_index(&client, &index.schema_name, &index.index_name, &logger).await {
-                    logger.log(logging::LogLevel::Error, &format!("Failed to drop orphaned index {}.{}: {}", index.schema_name, index.index_name, e));
-                }
+            if is_temporary_concurrent_reindex_index(&index.index_name)
+                && let Err(e) = index_operations::clean_orphaned_ccnew_index(
+                    &client,
+                    &index.schema_name,
+                    &index.index_name,
+                    &logger,
+                )
+                .await
+            {
+                logger.log(
+                    logging::LogLevel::Error,
+                    &format!(
+                        "Failed to drop orphaned index {}.{}: {}",
+                        index.schema_name, index.index_name, e
+                    ),
+                );
             }
         }
     }
@@ -871,8 +913,11 @@ async fn main() -> Result<()> {
     // Save excluded indexes to logbook before filtering them out
     for index in &indexes {
         if excluded_indexes.contains(&index.index_name) {
-            logger.log(logging::LogLevel::Info, &format!("Excluding index from reindexing: {}", index.index_name));
-            
+            logger.log(
+                logging::LogLevel::Info,
+                &format!("Excluding index from reindexing: {}", index.index_name),
+            );
+
             // Save excluded index to logbook
             let index_data = crate::save::IndexData {
                 schema_name: index.schema_name.clone(),
@@ -884,9 +929,15 @@ async fn main() -> Result<()> {
                 size_change: None,
                 reindex_duration: None,
             };
-            
+
             if let Err(e) = crate::save::save_index_info(&client, &index_data).await {
-                logger.log(logging::LogLevel::Error, &format!("Failed to save excluded index info for {}.{}: {}", index.schema_name, index.index_name, e));
+                logger.log(
+                    logging::LogLevel::Error,
+                    &format!(
+                        "Failed to save excluded index info for {}.{}: {}",
+                        index.schema_name, index.index_name, e
+                    ),
+                );
             }
         }
     }
@@ -898,19 +949,21 @@ async fn main() -> Result<()> {
             if excluded_indexes.contains(&index.index_name) {
                 return false;
             }
-            
+
             // Check if index is a temporary concurrent reindex index
             if is_temporary_concurrent_reindex_index(&index.index_name) {
                 logger.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index.index_name));
                 return false;
             }
-            
+
             true
         })
         .collect();
 
     // Re-initialize memory table with filtered indexes
-    memory_table.initialize_with_indexes(filtered_indexes.clone()).await;
+    memory_table
+        .initialize_with_indexes(filtered_indexes.clone())
+        .await;
 
     // Create worker tasks instead of individual index tasks
     for worker_id in 0..effective_threads {
