@@ -4,13 +4,13 @@ version = "2.6.0"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-postgres = "0.7"
 clap = { version = "4.0", features = ["derive"] }
 anyhow = "1.0"
 native-tls = { version = "0.2", features = ["vendored"] }
 postgres-native-tls = "0.5"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 
 [profile.release]
 # Optimize for size. "z" is even more aggressive than "s"
