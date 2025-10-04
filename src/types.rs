@@ -110,11 +110,11 @@ impl IndexMemoryTable {
 
     pub fn lock_table(&mut self, schema_name: &str, table_name: &str, worker_id: usize) -> bool {
         let table_key = self.get_table_key(schema_name, table_name);
-        if self.table_locks.contains_key(&table_key) {
-            false // Table already locked
-        } else {
-            self.table_locks.insert(table_key, worker_id);
+        if let std::collections::hash_map::Entry::Vacant(e) = self.table_locks.entry(table_key) {
+            e.insert(worker_id);
             true // Successfully locked
+        } else {
+            false // Table already locked
         }
     }
 
@@ -131,19 +131,19 @@ impl IndexMemoryTable {
     ) -> bool {
         let index_key = self.get_index_key(schema_name, index_name);
 
-        if let Some(entry) = self.indexes.get_mut(&index_key) {
-            if entry.status == IndexStatus::Pending {
-                entry.status = IndexStatus::InProgress;
-                entry.assigned_worker = Some(worker_id);
-                entry.lock_acquired_at = Some(std::time::Instant::now());
+        if let Some(entry) = self.indexes.get_mut(&index_key)
+            && entry.status == IndexStatus::Pending
+        {
+            entry.status = IndexStatus::InProgress;
+            entry.assigned_worker = Some(worker_id);
+            entry.lock_acquired_at = Some(std::time::Instant::now());
 
-                // Track worker assignment
-                self.worker_assignments
-                    .entry(worker_id)
-                    .or_insert_with(Vec::new)
-                    .push(index_key.clone());
-                return true;
-            }
+            // Track worker assignment
+            self.worker_assignments
+                .entry(worker_id)
+                .or_default()
+                .push(index_key.clone());
+            return true;
         }
         false
     }

@@ -52,16 +52,14 @@ impl SharedIndexMemoryTable {
         // Second pass: try to acquire the candidate
         if let Some(index_key) = candidate_index_key {
             // Clone the necessary data to avoid borrowing issues
-            let entry_data = if let Some(entry) = table.indexes.get(&index_key) {
-                Some((
+            let entry_data = table.indexes.get(&index_key).map(|entry| {
+                (
                     entry.index_info.schema_name.clone(),
                     entry.index_info.index_name.clone(),
                     entry.index_info.table_name.clone(),
                     entry.index_info.clone(),
-                ))
-            } else {
-                None
-            };
+                )
+            });
 
             if let Some((schema_name, index_name, table_name, index_info)) = entry_data {
                 // Try to lock the table and assign the index

@@ -279,7 +279,7 @@ fn get_password_from_pgpass(
         // Use wildcard matching (empty or '*' means match any)
         let host_matches = file_host.is_empty() || file_host == "*" || file_host == host;
         let port_matches =
-            file_port.is_empty() || file_port == "*" || file_port == &port.to_string();
+            file_port.is_empty() || file_port == "*" || file_port == port.to_string();
         let database_matches =
             file_database.is_empty() || file_database == "*" || file_database == database;
         let username_matches =
@@ -310,13 +310,13 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Validate bloat threshold if provided
-    if let Some(threshold) = args.reindex_only_bloated {
-        if threshold > 100 {
-            return Err(anyhow::anyhow!(
-                "Bloat threshold ({}) must be between 0 and 100",
-                threshold
-            ));
-        }
+    if let Some(threshold) = args.reindex_only_bloated
+        && threshold > 100
+    {
+        return Err(anyhow::anyhow!(
+            "Bloat threshold ({}) must be between 0 and 100",
+            threshold
+        ));
     }
 
     // Validate maintenance work mem limit
@@ -374,7 +374,7 @@ async fn main() -> Result<()> {
         .or_else(|| {
             let env_password = env::var("PG_PASSWORD").ok();
             // If PG_PASSWORD is set but empty, treat it as None to allow pgpass fallback
-            if env_password.as_ref().map_or(false, |p| p.is_empty()) {
+            if env_password.as_ref().is_some_and(|p| p.is_empty()) {
                 None
             } else {
                 env_password
@@ -607,7 +607,7 @@ async fn main() -> Result<()> {
     let temp_file_limit: i128 = temp_file_limit_str
         .parse()
         .context("Failed to parse temp_file_limit value")?;
-    if !(temp_file_limit == -1) {
+    if temp_file_limit != -1 {
         logger.log(logging::LogLevel::Warning, "Temp file limit is limited at database level. This may cause reindexing to fail at some point.Ensure you have set a proper temp_file_limit in your postgresql.conf file.");
     } else {
         logger.log(
@@ -890,23 +890,22 @@ async fn main() -> Result<()> {
         );
 
         for index in &indexes {
-            if is_temporary_concurrent_reindex_index(&index.index_name) {
-                if let Err(e) = index_operations::clean_orphaned_ccnew_index(
+            if is_temporary_concurrent_reindex_index(&index.index_name)
+                && let Err(e) = index_operations::clean_orphaned_ccnew_index(
                     &client,
                     &index.schema_name,
                     &index.index_name,
                     &logger,
                 )
                 .await
-                {
-                    logger.log(
-                        logging::LogLevel::Error,
-                        &format!(
-                            "Failed to drop orphaned index {}.{}: {}",
-                            index.schema_name, index.index_name, e
-                        ),
-                    );
-                }
+            {
+                logger.log(
+                    logging::LogLevel::Error,
+                    &format!(
+                        "Failed to drop orphaned index {}.{}: {}",
+                        index.schema_name, index.index_name, e
+                    ),
+                );
             }
         }
     }
