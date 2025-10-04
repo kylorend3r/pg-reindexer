@@ -2,7 +2,6 @@ use crate::types::ReindexingCheckResults;
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
-
 // check the active vacuums
 pub async fn get_active_vacuum(client: &Client) -> Result<bool> {
     let rows = client

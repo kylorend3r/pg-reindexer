@@ -74,7 +74,6 @@ pub const GET_CONSTRAINT_INDEXES_IN_SCHEMA_WITH_TABLE: &str = r#"
     ORDER BY pg_relation_size(i.oid) ASC;
 "#;
 
-
 pub const GET_INDEXES_IN_SCHEMA: &str = r#"
     SELECT 
         n.nspname as schema_name,
@@ -139,7 +138,6 @@ pub const GET_CONSTRAINT_INDEXES_IN_SCHEMA: &str = r#"
     AND pg_relation_size(i.oid) < ($3::bigint*1024*1024*1024)
     ORDER BY pg_relation_size(i.oid) ASC;
 "#;
-
 
 pub const GET_INDEX_SIZE: &str = r#"
     SELECT pg_relation_size(i.oid) as index_size
@@ -224,7 +222,8 @@ pub const GET_INDEX_BLOAT_RATIO: &str = r#"
 "#;
 
 // Get the current temp_file_limit setting
-pub const GET_TEMP_FILE_LIMIT: &str = "SELECT setting FROM pg_settings WHERE name='temp_file_limit'";
+pub const GET_TEMP_FILE_LIMIT: &str =
+    "SELECT setting FROM pg_settings WHERE name='temp_file_limit'";
 
 // Check if a schema exists
 pub const CHECK_SCHEMA_EXISTS: &str = r#"
