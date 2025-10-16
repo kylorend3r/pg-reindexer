@@ -469,6 +469,20 @@ pub async fn reindex_index_with_memory_table(
         get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
     let size_change = after_size - before_size;
 
+    // Calculate percentage reduction
+    let percentage_reduction = if before_size > 0 {
+        ((before_size - after_size) as f64 / before_size as f64) * 100.0
+    } else {
+        0.0
+    };
+    // Log after size with percentage reduction
+    logger.log(
+        logging::LogLevel::Info,
+        &format!(
+            "After size for {}.{}: {} bytes, {:.1}% reduced",
+            index_info.schema_name, index_info.index_name, after_size, percentage_reduction
+        ),
+    );
     // Final validation
     let index_is_valid =
         validate_index_integrity(&client, &index_info.schema_name, &index_info.index_name).await?;
