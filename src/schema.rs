@@ -50,7 +50,10 @@ pub async fn schema_exists(client: &Client, schema_name: &str) -> Result<bool> {
 /// Check if a table exists in a specific schema
 pub async fn table_exists(client: &Client, schema_name: &str, table_name: &str) -> Result<bool> {
     let rows = client
-        .query(crate::queries::CHECK_TABLE_EXISTS, &[&table_name, &schema_name])
+        .query(
+            crate::queries::CHECK_TABLE_EXISTS,
+            &[&table_name, &schema_name],
+        )
         .await
         .context("Failed to check if table exists")?;
 
