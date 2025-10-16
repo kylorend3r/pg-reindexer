@@ -10,7 +10,7 @@ pub struct IndexData {
     pub reindex_status: ReindexStatus,
     pub before_size: Option<i64>,
     pub after_size: Option<i64>,
-    pub size_change: Option<i64>,
+    pub size_change: Option<f32>,
     pub reindex_duration: Option<f32>,
 }
 
