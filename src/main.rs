@@ -409,7 +409,7 @@ async fn main() -> Result<()> {
     let client = if args.ssl {
         logger.log(
             logging::LogLevel::Info,
-            "Creating SSL/TLS connection to PostgreSQL",
+            "Creating connection to PostgreSQL",
         );
         // Parse connection string into Config
         let mut config: Config = connection_string
@@ -473,7 +473,7 @@ async fn main() -> Result<()> {
             if args.ssl_self_signed {
                 logger.log(
                     logging::LogLevel::Info,
-                    "SSL connection configured to allow self-signed certificates",
+                    "Connection configured to allow self-signed certificates",
                 );
                 tls_builder.danger_accept_invalid_certs(true);
             }
@@ -496,38 +496,31 @@ async fn main() -> Result<()> {
     } else {
         logger.log(
             logging::LogLevel::Info,
-            "Creating standard (non-SSL) connection to PostgreSQL",
+            "Creating connection to PostgreSQL",
         );
         // Connect without SSL
-        let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
-            .await
-            .context("ERROR: Failed to connect to PostgreSQL")?;
+    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
+        .await
+        .context("ERROR: Failed to connect to PostgreSQL")?;
 
-        // Spawn the connection to run in the background
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Connection error: {}", e);
-            }
-        });
+    // Spawn the connection to run in the background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
 
-        logger.log(
-            logging::LogLevel::Success,
-            "Successfully connected to PostgreSQL with standard connection",
-        );
-        client
-    };
-
-    if args.ssl {
-        logger.log(
-            logging::LogLevel::Success,
-            "Successfully connected to PostgreSQL with SSL",
-        );
-    } else {
         logger.log(
             logging::LogLevel::Success,
             "Successfully connected to PostgreSQL",
         );
-    }
+        client
+    };
+
+    logger.log(
+        logging::LogLevel::Success,
+        "Successfully connected to PostgreSQL",
+    );
 
     // Validate thread count and parallel worker settings
     logger.log(
@@ -728,7 +721,7 @@ async fn main() -> Result<()> {
                 logging::LogLevel::Warning,
                 &format!(
                     "No indexes found in schema '{}' for table '{}'",
-                    args.schema, table
+                args.schema, table
                 ),
             );
         } else {
@@ -745,9 +738,9 @@ async fn main() -> Result<()> {
             logging::LogLevel::Info,
             &format!(
                 "Found {} indexes in schema '{}' for table '{}'",
-                indexes.len(),
-                args.schema,
-                table
+            indexes.len(),
+            args.schema,
+            table
             ),
         );
     } else {
@@ -755,8 +748,8 @@ async fn main() -> Result<()> {
             logging::LogLevel::Info,
             &format!(
                 "Found {} indexes in schema '{}'",
-                indexes.len(),
-                args.schema
+            indexes.len(),
+            args.schema
             ),
         );
     }
