@@ -148,7 +148,7 @@ pub async fn create_connection_with_session_parameters_ssl(
     if use_ssl {
         logger.log(
             crate::logging::LogLevel::Info,
-            "Creating SSL/TLS connection for worker",
+            "Creating connection for worker",
         );
         // Parse connection string into Config
         let mut config: Config = connection_string
@@ -234,7 +234,7 @@ pub async fn create_connection_with_session_parameters_ssl(
     } else {
         logger.log(
             crate::logging::LogLevel::Info,
-            "Creating standard (non-SSL) connection for worker",
+            "Creating connection for worker",
         );
         // Connect without SSL
         let (client, connection) = tokio_postgres::connect(connection_string, NoTls)

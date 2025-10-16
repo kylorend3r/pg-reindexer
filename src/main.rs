@@ -196,13 +196,13 @@ struct Args {
     )]
     ssl: bool,
 
-    /// Accept invalid SSL certificates (insecure)
+    /// Allow self-signed SSL certificates
     #[arg(
         long,
         default_value = "false",
-        help = "Accept invalid SSL certificates (insecure). Use this only for testing or when you trust the server but have certificate issues."
+        help = "Allow self-signed or invalid SSL certificates."
     )]
-    ssl_accept_invalid_certs: bool,
+    ssl_self_signed: bool,
 
     /// Path to CA certificate file for SSL connection
     #[arg(
@@ -408,7 +408,7 @@ async fn main() -> Result<()> {
     let client = if args.ssl {
         logger.log(
             logging::LogLevel::Info,
-            "Creating SSL/TLS connection to PostgreSQL",
+            "Creating connection to PostgreSQL",
         );
         // Parse connection string into Config
         let mut config: Config = connection_string
@@ -471,10 +471,10 @@ async fn main() -> Result<()> {
             }
 
             // Handle invalid certificate acceptance
-            if args.ssl_accept_invalid_certs {
+            if args.ssl_self_signed {
                 logger.log(
-                    logging::LogLevel::Warning,
-                    "SSL connection with invalid certificate acceptance enabled (insecure)",
+                    logging::LogLevel::Info,
+                    "Connection configured to allow self-signed certificates",
                 );
                 tls_builder.danger_accept_invalid_certs(true);
             }
@@ -501,38 +501,31 @@ async fn main() -> Result<()> {
     } else {
         logger.log(
             logging::LogLevel::Info,
-            "Creating standard (non-SSL) connection to PostgreSQL",
+            "Creating connection to PostgreSQL",
         );
         // Connect without SSL
-        let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
-            .await
-            .context("ERROR: Failed to connect to PostgreSQL")?;
+    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
+        .await
+        .context("ERROR: Failed to connect to PostgreSQL")?;
 
-        // Spawn the connection to run in the background
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Connection error: {}", e);
-            }
-        });
+    // Spawn the connection to run in the background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
 
-        logger.log(
-            logging::LogLevel::Success,
-            "Successfully connected to PostgreSQL with standard connection",
-        );
-        client
-    };
-
-    if args.ssl {
-        logger.log(
-            logging::LogLevel::Success,
-            "Successfully connected to PostgreSQL with SSL",
-        );
-    } else {
         logger.log(
             logging::LogLevel::Success,
             "Successfully connected to PostgreSQL",
         );
-    }
+        client
+    };
+
+    logger.log(
+        logging::LogLevel::Success,
+        "Successfully connected to PostgreSQL",
+    );
 
     // Validate thread count and parallel worker settings
     logger.log(
@@ -752,7 +745,7 @@ async fn main() -> Result<()> {
                 logging::LogLevel::Warning,
                 &format!(
                     "No indexes found in schema '{}' for table '{}'",
-                    args.schema, table
+                args.schema, table
                 ),
             );
         } else {
@@ -769,9 +762,9 @@ async fn main() -> Result<()> {
             logging::LogLevel::Info,
             &format!(
                 "Found {} indexes in schema '{}' for table '{}'",
-                indexes.len(),
-                args.schema,
-                table
+            indexes.len(),
+            args.schema,
+            table
             ),
         );
     } else {
@@ -779,8 +772,8 @@ async fn main() -> Result<()> {
             logging::LogLevel::Info,
             &format!(
                 "Found {} indexes in schema '{}'",
-                indexes.len(),
-                args.schema
+            indexes.len(),
+            args.schema
             ),
         );
     }
@@ -980,7 +973,7 @@ async fn main() -> Result<()> {
         let bloat_threshold = args.reindex_only_bloated;
         let concurrently = args.concurrently;
         let use_ssl = args.ssl;
-        let accept_invalid_certs = args.ssl_accept_invalid_certs;
+        let accept_invalid_certs = args.ssl_self_signed;
         let ssl_ca_cert = args.ssl_ca_cert.clone();
         let ssl_client_cert = args.ssl_client_cert.clone();
         let ssl_client_key = args.ssl_client_key.clone();

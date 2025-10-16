@@ -20,3 +20,6 @@ QUICK_TEST_REFERENCE.md
 *.dll
 *.so
 *.dylib
+
+# Pgpass file
+.pgpass
