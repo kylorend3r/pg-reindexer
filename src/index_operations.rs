@@ -467,7 +467,6 @@ pub async fn reindex_index_with_memory_table(
     // Get after size
     let after_size =
         get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
-    let size_change = after_size - before_size;
 
     // Calculate percentage reduction
     let percentage_reduction = if before_size > 0 {
@@ -497,7 +496,7 @@ pub async fn reindex_index_with_memory_table(
             reindex_status: crate::types::ReindexStatus::ValidationFailed,
             before_size: Some(before_size),
             after_size: Some(after_size),
-            size_change: Some(size_change),
+            size_change: Some(((percentage_reduction * 10.0).round() / 10.0) as f32),
             reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
         };
         crate::save::save_index_info(&client, &index_data).await?;
@@ -512,7 +511,7 @@ pub async fn reindex_index_with_memory_table(
         reindex_status: crate::types::ReindexStatus::Success,
         before_size: Some(before_size),
         after_size: Some(after_size),
-        size_change: Some(size_change),
+        size_change: Some(percentage_reduction as f32),
         reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
     };
     crate::save::save_index_info(&client, &index_data).await?;
