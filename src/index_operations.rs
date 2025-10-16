@@ -1,6 +1,6 @@
 use crate::logging;
-use crate::types::IndexInfo;
 use crate::memory_table::SharedIndexMemoryTable;
+use crate::types::IndexInfo;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
@@ -23,11 +23,22 @@ pub async fn get_indexes_in_schema(
 
     let rows = if let Some(table) = table_name {
         client
-            .query(query, &[&schema_name, &table, &(min_size_gb as i64), &(max_size_gb as i64)])
+            .query(
+                query,
+                &[
+                    &schema_name,
+                    &table,
+                    &(min_size_gb as i64),
+                    &(max_size_gb as i64),
+                ],
+            )
             .await
     } else {
         client
-            .query(query, &[&schema_name, &(min_size_gb as i64), &(max_size_gb as i64)])
+            .query(
+                query,
+                &[&schema_name, &(min_size_gb as i64), &(max_size_gb as i64)],
+            )
             .await
     }
     .context("Failed to query indexes in schema")?;
@@ -115,7 +126,6 @@ pub async fn get_index_bloat_ratio(
     }
 }
 
-
 /// Worker function that processes indexes using the memory table for concurrency control
 pub async fn worker_with_memory_table(
     worker_id: usize,
@@ -164,7 +174,10 @@ pub async fn worker_with_memory_table(
     // Process indexes until none are available
     while memory_table.has_pending_indexes().await {
         // Try to acquire an index
-        if let Some(index_info) = memory_table.try_acquire_index_for_worker(worker_id, &logger).await {
+        if let Some(index_info) = memory_table
+            .try_acquire_index_for_worker(worker_id, &logger)
+            .await
+        {
             logger.log(
                 logging::LogLevel::Info,
                 &format!(
@@ -185,43 +198,48 @@ pub async fn worker_with_memory_table(
                 bloat_threshold,
                 concurrently,
                 user_index_type.clone(),
-            ).await;
+            )
+            .await;
 
             // Handle the result
             match result {
-                Ok(status) => {
-                    match status {
-                        crate::types::ReindexStatus::Success => {
-                            memory_table.release_index_and_mark_completed(
+                Ok(status) => match status {
+                    crate::types::ReindexStatus::Success => {
+                        memory_table
+                            .release_index_and_mark_completed(
                                 &index_info.schema_name,
                                 &index_info.index_name,
                                 &index_info.table_name,
                                 worker_id,
                                 &logger,
-                            ).await;
-                        }
-                        crate::types::ReindexStatus::Skipped | 
-                        crate::types::ReindexStatus::InvalidIndex | 
-                        crate::types::ReindexStatus::BelowBloatThreshold => {
-                            memory_table.release_index_and_mark_skipped(
-                                &index_info.schema_name,
-                                &index_info.index_name,
-                                &index_info.table_name,
-                                worker_id,
-                                &logger,
-                            ).await;
-                        }
-                        _ => {
-                            memory_table.release_index_and_mark_failed(
-                                &index_info.schema_name,
-                                &index_info.index_name,
-                                &index_info.table_name,
-                                worker_id,
-                                &logger,
-                            ).await;
-                        }
+                            )
+                            .await;
                     }
-                }
+                    crate::types::ReindexStatus::Skipped
+                    | crate::types::ReindexStatus::InvalidIndex
+                    | crate::types::ReindexStatus::BelowBloatThreshold => {
+                        memory_table
+                            .release_index_and_mark_skipped(
+                                &index_info.schema_name,
+                                &index_info.index_name,
+                                &index_info.table_name,
+                                worker_id,
+                                &logger,
+                            )
+                            .await;
+                    }
+                    _ => {
+                        memory_table
+                            .release_index_and_mark_failed(
+                                &index_info.schema_name,
+                                &index_info.index_name,
+                                &index_info.table_name,
+                                worker_id,
+                                &logger,
+                            )
+                            .await;
+                    }
+                },
                 Err(e) => {
                     logger.log(
                         logging::LogLevel::Error,
@@ -230,13 +248,15 @@ pub async fn worker_with_memory_table(
                             worker_id, index_info.schema_name, index_info.index_name, e
                         ),
                     );
-                    memory_table.release_index_and_mark_failed(
-                        &index_info.schema_name,
-                        &index_info.index_name,
-                        &index_info.table_name,
-                        worker_id,
-                        &logger,
-                    ).await;
+                    memory_table
+                        .release_index_and_mark_failed(
+                            &index_info.schema_name,
+                            &index_info.index_name,
+                            &index_info.table_name,
+                            worker_id,
+                            &logger,
+                        )
+                        .await;
                 }
             }
         } else {
@@ -283,7 +303,8 @@ pub async fn reindex_index_with_memory_table(
     );
 
     // Get before size
-    let before_size = get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
+    let before_size =
+        get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
     logger.log(
         logging::LogLevel::Info,
         &format!(
@@ -305,7 +326,8 @@ pub async fn reindex_index_with_memory_table(
     };
 
     // Check if the index is invalid before reindexing
-    let index_is_valid = validate_index_integrity(&client, &index_info.schema_name, &index_info.index_name).await?;
+    let index_is_valid =
+        validate_index_integrity(&client, &index_info.schema_name, &index_info.index_name).await?;
     if !index_is_valid {
         logger.log(
             logging::LogLevel::Warning,
@@ -358,7 +380,7 @@ pub async fn reindex_index_with_memory_table(
 
     // Perform fresh reindexing checks
     let reindexing_results = crate::checks::perform_reindexing_checks(&client).await?;
-    
+
     // Determine specific skip reason
     let mut skip_reasons = Vec::new();
     if reindexing_results.active_vacuum && !skip_active_vacuums {
@@ -404,7 +426,6 @@ pub async fn reindex_index_with_memory_table(
         ),
     );
 
-
     let start_time = std::time::Instant::now();
     let result = client.execute(&reindex_sql, &[]).await;
     let duration = start_time.elapsed();
@@ -420,8 +441,12 @@ pub async fn reindex_index_with_memory_table(
             );
         }
         Err(e) => {
-            logger.log_index_failed(&index_info.schema_name, &index_info.index_name, &format!("SQL execution failed after {:?}: {}", duration, e));
-            
+            logger.log_index_failed(
+                &index_info.schema_name,
+                &index_info.index_name,
+                &format!("SQL execution failed after {:?}: {}", duration, e),
+            );
+
             // Save failed reindex record
             let index_data = crate::save::IndexData {
                 schema_name: index_info.schema_name.clone(),
@@ -434,18 +459,19 @@ pub async fn reindex_index_with_memory_table(
                 reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
             };
             crate::save::save_index_info(&client, &index_data).await?;
-            
+
             return Ok(crate::types::ReindexStatus::Failed);
         }
     }
 
     // Get after size
-    let after_size = get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
+    let after_size =
+        get_index_size(&client, &index_info.schema_name, &index_info.index_name).await?;
     let size_change = after_size - before_size;
 
-    
     // Final validation
-    let index_is_valid = validate_index_integrity(&client, &index_info.schema_name, &index_info.index_name).await?;
+    let index_is_valid =
+        validate_index_integrity(&client, &index_info.schema_name, &index_info.index_name).await?;
     if !index_is_valid {
         logger.log_index_validation_failed(&index_info.schema_name, &index_info.index_name);
 
@@ -491,25 +517,37 @@ pub async fn clean_orphaned_ccnew_index(
     // First validate the index integrity to ensure it's safe to drop
     logger.log(
         logging::LogLevel::Info,
-        &format!("Validating index integrity before dropping orphaned index: {}.{}", schema_name, index_name),
+        &format!(
+            "Validating index integrity before dropping orphaned index: {}.{}",
+            schema_name, index_name
+        ),
     );
-    
+
     let index_is_valid = validate_index_integrity(client, schema_name, index_name).await?;
-    
+
     if !index_is_valid {
         logger.log(
             logging::LogLevel::Warning,
-            &format!("Index {}.{} is invalid, proceeding with drop operation", schema_name, index_name),
+            &format!(
+                "Index {}.{} is invalid, proceeding with drop operation",
+                schema_name, index_name
+            ),
         );
     } else {
         logger.log(
             logging::LogLevel::Info,
-            &format!("Index {}.{} is valid, proceeding with drop operation", schema_name, index_name),
+            &format!(
+                "Index {}.{} is valid, proceeding with drop operation",
+                schema_name, index_name
+            ),
         );
     }
-    
-    let drop_sql = format!("DROP INDEX IF EXISTS \"{}\".\"{}\"", schema_name, index_name);
-    
+
+    let drop_sql = format!(
+        "DROP INDEX IF EXISTS \"{}\".\"{}\"",
+        schema_name, index_name
+    );
+
     logger.log(
         logging::LogLevel::Info,
         &format!("Dropping orphaned index: {}.{}", schema_name, index_name),
@@ -519,16 +557,27 @@ pub async fn clean_orphaned_ccnew_index(
         Ok(_) => {
             logger.log(
                 logging::LogLevel::Success,
-                &format!("Successfully dropped orphaned index: {}.{}", schema_name, index_name),
+                &format!(
+                    "Successfully dropped orphaned index: {}.{}",
+                    schema_name, index_name
+                ),
             );
             Ok(())
         }
         Err(e) => {
             logger.log(
                 logging::LogLevel::Error,
-                &format!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e),
+                &format!(
+                    "Failed to drop orphaned index {}.{}: {}",
+                    schema_name, index_name, e
+                ),
             );
-            Err(anyhow::anyhow!("Failed to drop orphaned index {}.{}: {}", schema_name, index_name, e))
+            Err(anyhow::anyhow!(
+                "Failed to drop orphaned index {}.{}: {}",
+                schema_name,
+                index_name,
+                e
+            ))
         }
     }
 }
