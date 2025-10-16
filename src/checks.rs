@@ -2,14 +2,13 @@ use crate::types::ReindexingCheckResults;
 use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
-
 // check the active vacuums
 pub async fn get_active_vacuum(client: &Client) -> Result<bool> {
     let rows = client
         .query(crate::queries::GET_ACTIVE_VACUUM, &[])
         .await
         .context("Failed to query active vacuums")?;
-    Ok(rows.len() > 0)
+    Ok(!rows.is_empty())
 }
 
 // check the inactive replication slots
