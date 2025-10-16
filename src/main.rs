@@ -197,13 +197,13 @@ struct Args {
     )]
     ssl: bool,
 
-    /// Accept invalid SSL certificates (insecure)
+    /// Allow self-signed SSL certificates
     #[arg(
         long,
         default_value = "false",
-        help = "Accept invalid SSL certificates (insecure). Use this only for testing or when you trust the server but have certificate issues."
+        help = "Allow self-signed or invalid SSL certificates."
     )]
-    ssl_accept_invalid_certs: bool,
+    ssl_self_signed: bool,
 
     /// Path to CA certificate file for SSL connection
     #[arg(
@@ -470,10 +470,10 @@ async fn main() -> Result<()> {
             }
             
             // Handle invalid certificate acceptance
-            if args.ssl_accept_invalid_certs {
+            if args.ssl_self_signed {
                 logger.log(
-                    logging::LogLevel::Warning,
-                    "SSL connection with invalid certificate acceptance enabled (insecure)",
+                    logging::LogLevel::Info,
+                    "SSL connection configured to allow self-signed certificates",
                 );
                 tls_builder.danger_accept_invalid_certs(true);
             }
@@ -927,7 +927,7 @@ async fn main() -> Result<()> {
         let bloat_threshold = args.reindex_only_bloated;
         let concurrently = args.concurrently;
         let use_ssl = args.ssl;
-        let accept_invalid_certs = args.ssl_accept_invalid_certs;
+        let accept_invalid_certs = args.ssl_self_signed;
         let ssl_ca_cert = args.ssl_ca_cert.clone();
         let ssl_client_cert = args.ssl_client_cert.clone();
         let ssl_client_key = args.ssl_client_key.clone();

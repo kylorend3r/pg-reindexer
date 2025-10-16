@@ -67,7 +67,7 @@ pg-reindexer --schema public --threads 8
 pg-reindexer --schema public --host your-postgres-server.com --ssl
 
 # SSL connection with invalid certificate acceptance (testing only)
-pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-accept-invalid-certs
+pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-self-signed
 ```
 
 ## Usage Examples
@@ -187,8 +187,8 @@ pg-reindexer --schema public --host your-postgres-server.com --port 5432 --ssl
 # SSL connection with custom credentials
 pg-reindexer --schema public --host your-postgres-server.com --username myuser --password mypass --ssl
 
-# SSL connection for testing (accepts invalid certificates - INSECURE)
-pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-accept-invalid-certs
+# SSL connection for testing (allows self-signed certificates)
+pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-self-signed
 
 # SSL connection with custom CA certificate
 pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-ca-cert /path/to/ca-cert.pem
@@ -270,8 +270,8 @@ export PG_PASSWORD=mypass
 # Use SSL connection
 pg-reindexer --schema public --ssl
 
-# For testing with invalid certificates (INSECURE)
-pg-reindexer --schema public --ssl --ssl-accept-invalid-certs
+# For testing with self-signed certificates
+pg-reindexer --schema public --ssl --ssl-self-signed
 ```
 
 ## Command Line Interface
@@ -306,7 +306,7 @@ Options:
       --concurrently                                     Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX) [default: true]
       --clean-orphaned-indexes                            Drop orphaned _ccnew indexes (temporary concurrent reindex indexes) before starting the reindexing process. These indexes are created by PostgreSQL during REINDEX INDEX CONCURRENTLY operations and may be left behind if the operation was interrupted.
       --ssl                                              Enable SSL connection to PostgreSQL. When enabled, the connection will use SSL/TLS encryption.
-      --ssl-accept-invalid-certs                         Accept invalid SSL certificates (insecure). Use this only for testing or when you trust the server but have certificate issues.
+      --ssl-self-signed                                   Allow self-signed or invalid SSL certificates. Useful for development environments or when connecting to servers with self-signed certificates.
       --ssl-ca-cert <SSL_CA_CERT>                        Path to CA certificate file (.pem) for SSL connection. If not provided, uses system default certificate store.
       --ssl-client-cert <SSL_CLIENT_CERT>                Path to client certificate file (.pem) for SSL connection. Requires --ssl-client-key.
       --ssl-client-key <SSL_CLIENT_KEY>                  Path to client private key file (.pem) for SSL connection. Requires --ssl-client-cert.
