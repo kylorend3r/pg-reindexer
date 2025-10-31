@@ -32,6 +32,60 @@ pub async fn create_index_info_table(client: &Client) -> Result<()> {
     Ok(())
 }
 
+pub async fn create_reindex_state_table(client: &Client) -> Result<()> {
+    // Create the reindexer schema if it doesn't exist
+    let create_schema_query = "CREATE SCHEMA IF NOT EXISTS reindexer";
+    client
+        .execute(create_schema_query, &[])
+        .await
+        .context("Failed to create reindexer schema")?;
+
+    // Create the state table if it doesn't exist
+    let create_table_query = r#"
+        CREATE TABLE IF NOT EXISTS reindexer.reindex_state (
+            id SERIAL PRIMARY KEY,
+            schema_name VARCHAR(255) NOT NULL,
+            table_name VARCHAR(255) NOT NULL,
+            index_name VARCHAR(255) NOT NULL,
+            index_type VARCHAR(255) NOT NULL,
+            state VARCHAR(50) NOT NULL DEFAULT 'pending',
+            session_id VARCHAR(255),
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(schema_name, index_name)
+        );
+    "#;
+
+    client
+        .execute(create_table_query, &[])
+        .await
+        .context("Failed to create reindex_state table")?;
+
+    // Create index on state for faster queries
+    let create_index_query = r#"
+        CREATE INDEX IF NOT EXISTS idx_reindex_state_state 
+        ON reindexer.reindex_state(state);
+    "#;
+
+    client
+        .execute(create_index_query, &[])
+        .await
+        .context("Failed to create index on reindex_state")?;
+
+    // Create index on session_id for faster queries
+    let create_session_index_query = r#"
+        CREATE INDEX IF NOT EXISTS idx_reindex_state_session_id 
+        ON reindexer.reindex_state(session_id);
+    "#;
+
+    client
+        .execute(create_session_index_query, &[])
+        .await
+        .context("Failed to create session_id index on reindex_state")?;
+
+    Ok(())
+}
+
 /// Check if a schema exists in the database
 pub async fn schema_exists(client: &Client, schema_name: &str) -> Result<bool> {
     let rows = client
