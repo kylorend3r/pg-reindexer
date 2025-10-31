@@ -60,6 +60,9 @@ pg-reindexer --schema public --index-type constraint
 # Exclude specific indexes from reindexing
 pg-reindexer --schema public --exclude-indexes "idx_users_email,idx_orders_created_at"
 
+# Resume from a previous interrupted reindexing session
+pg-reindexer --schema public --resume
+
 # High-performance reindexing
 pg-reindexer --schema public --threads 8
 
@@ -167,6 +170,21 @@ pg-reindexer --schema public --table users --index-type btree
 # Only reindex indexes with bloat ratio >= 15%
 pg-reindexer --schema public --reindex-only-bloated 15
 ```
+
+### 🔄 **Resume Interrupted Sessions**
+
+```bash
+# Resume reindexing from a previous interrupted session
+pg-reindexer --schema public --resume
+
+# Resume with same performance settings as original run
+pg-reindexer --schema public --resume --threads 8 --maintenance-work-mem-gb 4
+
+# Resume and clean orphaned indexes
+pg-reindexer --schema public --resume --clean-orphaned-indexes
+```
+
+**Note**: The `--resume` option will continue processing indexes that were pending, failed, or in progress from a previous session. Completed indexes are preserved and will not be reindexed again.
 
 ### 🧹 **Orphaned Index Cleanup**
 
@@ -311,6 +329,7 @@ Options:
       --ssl-client-cert <SSL_CLIENT_CERT>                Path to client certificate file (.pem) for SSL connection. Requires --ssl-client-key.
       --ssl-client-key <SSL_CLIENT_KEY>                  Path to client private key file (.pem) for SSL connection. Requires --ssl-client-cert.
       --exclude-indexes <EXCLUDE_INDEXES>                Comma-separated list of index names to exclude from reindexing. These indexes will be skipped even if they match other selection criteria.
+      --resume                                           Resume reindexing from previous state. If enabled, the tool will load pending/failed indexes from the reindex_state table and continue processing.
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
@@ -344,6 +363,12 @@ Options:
 - **Threshold-Based Filtering**: Only reindex indexes that exceed the specified bloat threshold
 - **Efficient Maintenance**: Focus resources on indexes that actually need reindexing
 - **Configurable Sensitivity**: Set bloat threshold from 0-100% to match your maintenance strategy
+
+### 🔄 **Resume Functionality**
+- **Interrupted Session Recovery**: Resume reindexing from where it left off after an interruption or crash
+- **State Preservation**: Automatically tracks and preserves completed work across sessions
+- **Automatic Discovery**: Discovers any new indexes that weren't in the previous session
+- **Failure Recovery**: Retries failed indexes from previous sessions when resuming
 
 ### 🔧 **Performance Optimization**
 - **Configurable GUCs**: Set PostgreSQL parameters for optimal performance:
