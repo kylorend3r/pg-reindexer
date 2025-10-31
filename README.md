@@ -63,6 +63,9 @@ pg-reindexer --schema public --exclude-indexes "idx_users_email,idx_orders_creat
 # Resume from a previous interrupted reindexing session
 pg-reindexer --schema public --resume
 
+# Silence mode - only log to file, minimal terminal output
+pg-reindexer --schema public --silence-mode
+
 # High-performance reindexing
 pg-reindexer --schema public --threads 8
 
@@ -185,6 +188,21 @@ pg-reindexer --schema public --resume --clean-orphaned-indexes
 ```
 
 **Note**: The `--resume` option will continue processing indexes that were pending, failed, or in progress from a previous session. Completed indexes are preserved and will not be reindexed again.
+
+### 🔇 **Silence Mode**
+
+```bash
+# Run in silence mode - only startup and completion messages to terminal
+pg-reindexer --schema public --silence-mode
+
+# Silence mode with other options
+pg-reindexer --schema public --silence-mode --threads 8 --maintenance-work-mem-gb 4
+
+# Resume with silence mode
+pg-reindexer --schema public --resume --silence-mode
+```
+
+**Note**: In silence mode, all detailed logs are written to the log file but not printed to the terminal. Only the startup message and final completion summary are displayed. This is useful for automated scripts or when running in background processes.
 
 ### 🧹 **Orphaned Index Cleanup**
 
@@ -330,6 +348,7 @@ Options:
       --ssl-client-key <SSL_CLIENT_KEY>                  Path to client private key file (.pem) for SSL connection. Requires --ssl-client-cert.
       --exclude-indexes <EXCLUDE_INDEXES>                Comma-separated list of index names to exclude from reindexing. These indexes will be skipped even if they match other selection criteria.
       --resume                                           Resume reindexing from previous state. If enabled, the tool will load pending/failed indexes from the reindex_state table and continue processing.
+      --silence-mode                                     Silence mode: suppresses all terminal output except startup and completion messages. All logs are still written to the log file.
   -h, --help                                            Print help
   -V, --version                                         Print version
 ```
@@ -369,6 +388,12 @@ Options:
 - **State Preservation**: Automatically tracks and preserves completed work across sessions
 - **Automatic Discovery**: Discovers any new indexes that weren't in the previous session
 - **Failure Recovery**: Retries failed indexes from previous sessions when resuming
+
+### 🔇 **Silence Mode**
+- **Minimal Terminal Output**: Suppresses all terminal output except startup and completion messages
+- **Full File Logging**: All detailed logs are still written to the log file for later review
+- **Script-Friendly**: Ideal for automated scripts and background processes
+- **Progress Tracking**: Completion summary always displays for quick status checks
 
 ### 🔧 **Performance Optimization**
 - **Configurable GUCs**: Set PostgreSQL parameters for optimal performance:
