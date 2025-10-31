@@ -16,6 +16,7 @@ anyhow = "1.0"
 native-tls = { version = "0.2", features = ["vendored"] }
 postgres-native-tls = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+uuid = { version = "1.0", features = ["v4"] }
 
 [profile.release]
 # Optimize for size. "z" is even more aggressive than "s"
