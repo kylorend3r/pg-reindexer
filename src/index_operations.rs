@@ -147,6 +147,7 @@ pub async fn worker_with_memory_table(
     ssl_client_cert: Option<String>,
     ssl_client_key: Option<String>,
     user_index_type: String,
+    session_id: Option<String>,
 ) -> Result<()> {
     logger.log(
         logging::LogLevel::Info,
@@ -186,6 +187,26 @@ pub async fn worker_with_memory_table(
                 ),
             );
 
+            // Mark index as in_progress in state table if session_id is provided
+            if let Some(ref sid) = session_id {
+                if let Err(e) = crate::state::mark_index_in_progress(
+                    &client,
+                    &index_info.schema_name,
+                    &index_info.index_name,
+                    sid,
+                )
+                .await
+                {
+                    logger.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "Failed to mark index {}.{} as in_progress in state table: {}",
+                            index_info.schema_name, index_info.index_name, e
+                        ),
+                    );
+                }
+            }
+
             // Process the index
             let result = reindex_index_with_memory_table(
                 client.clone(),
@@ -198,46 +219,81 @@ pub async fn worker_with_memory_table(
                 bloat_threshold,
                 concurrently,
                 user_index_type.clone(),
+                session_id.clone(),
             )
             .await;
 
             // Handle the result
             match result {
-                Ok(status) => match status {
-                    crate::types::ReindexStatus::Success => {
-                        memory_table
-                            .release_index_and_mark_completed(
-                                &index_info.schema_name,
-                                &index_info.index_name,
-                                &index_info.table_name,
-                                worker_id,
-                                &logger,
-                            )
-                            .await;
+                Ok(status) => {
+                    // Update state table based on result
+                    let state = match status {
+                        crate::types::ReindexStatus::Success => {
+                            crate::state::ReindexState::Completed
+                        }
+                        crate::types::ReindexStatus::Skipped
+                        | crate::types::ReindexStatus::InvalidIndex
+                        | crate::types::ReindexStatus::BelowBloatThreshold => {
+                            crate::state::ReindexState::Skipped
+                        }
+                        _ => crate::state::ReindexState::Failed,
+                    };
+
+                    if let Some(ref _sid) = session_id {
+                        if let Err(e) = crate::state::update_index_state(
+                            &client,
+                            &index_info.schema_name,
+                            &index_info.index_name,
+                            &state,
+                        )
+                        .await
+                        {
+                            logger.log(
+                                logging::LogLevel::Warning,
+                                &format!(
+                                    "Failed to update state for index {}.{}: {}",
+                                    index_info.schema_name, index_info.index_name, e
+                                ),
+                            );
+                        }
                     }
-                    crate::types::ReindexStatus::Skipped
-                    | crate::types::ReindexStatus::InvalidIndex
-                    | crate::types::ReindexStatus::BelowBloatThreshold => {
-                        memory_table
-                            .release_index_and_mark_skipped(
-                                &index_info.schema_name,
-                                &index_info.index_name,
-                                &index_info.table_name,
-                                worker_id,
-                                &logger,
-                            )
-                            .await;
-                    }
-                    _ => {
-                        memory_table
-                            .release_index_and_mark_failed(
-                                &index_info.schema_name,
-                                &index_info.index_name,
-                                &index_info.table_name,
-                                worker_id,
-                                &logger,
-                            )
-                            .await;
+
+                    match status {
+                        crate::types::ReindexStatus::Success => {
+                            memory_table
+                                .release_index_and_mark_completed(
+                                    &index_info.schema_name,
+                                    &index_info.index_name,
+                                    &index_info.table_name,
+                                    worker_id,
+                                    &logger,
+                                )
+                                .await;
+                        }
+                        crate::types::ReindexStatus::Skipped
+                        | crate::types::ReindexStatus::InvalidIndex
+                        | crate::types::ReindexStatus::BelowBloatThreshold => {
+                            memory_table
+                                .release_index_and_mark_skipped(
+                                    &index_info.schema_name,
+                                    &index_info.index_name,
+                                    &index_info.table_name,
+                                    worker_id,
+                                    &logger,
+                                )
+                                .await;
+                        }
+                        _ => {
+                            memory_table
+                                .release_index_and_mark_failed(
+                                    &index_info.schema_name,
+                                    &index_info.index_name,
+                                    &index_info.table_name,
+                                    worker_id,
+                                    &logger,
+                                )
+                                .await;
+                        }
                     }
                 },
                 Err(e) => {
@@ -248,6 +304,27 @@ pub async fn worker_with_memory_table(
                             worker_id, index_info.schema_name, index_info.index_name, e
                         ),
                     );
+                    
+                    // Update state table
+                    if let Some(ref _sid) = session_id {
+                        if let Err(err) = crate::state::update_index_state(
+                            &client,
+                            &index_info.schema_name,
+                            &index_info.index_name,
+                            &crate::state::ReindexState::Failed,
+                        )
+                        .await
+                        {
+                            logger.log(
+                                logging::LogLevel::Warning,
+                                &format!(
+                                    "Failed to update state for index {}.{}: {}",
+                                    index_info.schema_name, index_info.index_name, err
+                                ),
+                            );
+                        }
+                    }
+
                     memory_table
                         .release_index_and_mark_failed(
                             &index_info.schema_name,
@@ -285,6 +362,7 @@ pub async fn reindex_index_with_memory_table(
     bloat_threshold: Option<u8>,
     concurrently: bool,
     user_index_type: String,
+    _session_id: Option<String>,
 ) -> Result<crate::types::ReindexStatus> {
     logger.log_index_start(
         worker_id,
@@ -492,7 +570,7 @@ pub async fn reindex_index_with_memory_table(
         let index_data = crate::save::IndexData {
             schema_name: index_info.schema_name.clone(),
             index_name: index_info.index_name.clone(),
-            index_type: user_index_type.clone(),
+            index_type: user_index_type.clone(),    
             reindex_status: crate::types::ReindexStatus::ValidationFailed,
             before_size: Some(before_size),
             after_size: Some(after_size),

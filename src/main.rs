@@ -18,6 +18,7 @@ mod memory_table;
 mod queries;
 mod save;
 mod schema;
+mod state;
 mod types;
 
 #[derive(Parser, Debug)]
@@ -231,6 +232,14 @@ struct Args {
         help = "Comma-separated list of index names to exclude from reindexing. These indexes will be skipped even if they match other selection criteria."
     )]
     exclude_indexes: Option<String>,
+
+    /// Resume reindexing from previous state
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Resume reindexing from previous state. If enabled, the tool will load pending/failed indexes from the reindex_state table and continue processing."
+    )]
+    resume: bool,
 }
 
 fn get_password_from_pgpass(
@@ -706,7 +715,85 @@ async fn main() -> Result<()> {
     // Log the index size limits for clarity
     logger.log_index_size_limits(args.min_size_gb, args.max_size_gb);
 
+    // Generate session ID and handle resume logic
+    let session_id = if args.resume {
+        // Check if there are pending indexes in the state table
+        match state::has_pending_indexes(&client, None).await {
+            Ok(has_pending) => {
+                if has_pending {
+                    logger.log(
+                        logging::LogLevel::Info,
+                        "Resume mode: Found pending indexes in state table. Discovering all indexes and merging with state.",
+                    );
+                    // Generate session ID for resume
+                    let session_id = state::generate_session_id();
+                    Some(session_id)
+                } else {
+                    logger.log(
+                        logging::LogLevel::Info,
+                        "Resume mode: No pending indexes found. Starting fresh session.",
+                    );
+                    // Start fresh
+                    let indexes = get_indexes_in_schema(
+                        &client,
+                        &args.schema,
+                        args.table.as_deref(),
+                        args.min_size_gb,
+                        args.max_size_gb,
+                        &args.index_type,
+                    )
+                    .await?;
+                    
+                    let session_id = state::generate_session_id();
+                    state::initialize_state_table(&client, &indexes, &session_id).await?;
+                    Some(session_id)
+                }
+            }
+            Err(e) => {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!("Failed to check for pending indexes: {}. Starting fresh session.", e),
+                );
+                // Start fresh
+                let indexes = get_indexes_in_schema(
+                    &client,
+                    &args.schema,
+                    args.table.as_deref(),
+                    args.min_size_gb,
+                    args.max_size_gb,
+                    &args.index_type,
+                )
+                .await?;
+                
+                let session_id = state::generate_session_id();
+                state::initialize_state_table(&client, &indexes, &session_id).await?;
+                Some(session_id)
+            }
+        }
+    } else {
+        // Normal mode - start from zero by clearing existing state for this schema
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Starting fresh: clearing any existing state for schema '{}'", args.schema),
+        );
+        
+        if let Err(e) = state::clear_schema_state(&client, &args.schema).await {
+            logger.log(
+                logging::LogLevel::Warning,
+                &format!("Failed to clear existing state for schema '{}': {}", args.schema, e),
+            );
+        } else {
+            logger.log(
+                logging::LogLevel::Success,
+                &format!("Cleared existing state for schema '{}'", args.schema),
+            );
+        }
+        
+        Some(state::generate_session_id())
+    };
+
     // Get all indexes in the specified schema (and optionally table)
+    // Always discover from database first, then merge with state table when resuming
     let indexes = get_indexes_in_schema(
         &client,
         &args.schema,
@@ -716,6 +803,34 @@ async fn main() -> Result<()> {
         &args.index_type,
     )
     .await?;
+
+    // If resuming, merge discovered indexes with state table
+    // This ensures we don't miss any indexes that weren't added to state table yet
+    if args.resume {
+        logger.log(
+            logging::LogLevel::Info,
+            &format!("Resume mode: Discovered {} indexes from database. Merging with state table...", indexes.len()),
+        );
+        
+        if let Some(ref sid) = session_id {
+            // Initialize/update state table with all discovered indexes
+            // This will:
+            // - Add any new indexes not in state table as 'pending'
+            // - Reset 'in_progress' to 'pending' for crashed sessions
+            // - Keep existing 'pending' and 'failed' states
+            if let Err(e) = state::initialize_state_table(&client, &indexes, sid).await {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!("Failed to merge indexes with state table: {}", e),
+                );
+            } else {
+                logger.log(
+                    logging::LogLevel::Success,
+                    "Successfully merged discovered indexes with state table.",
+                );
+            }
+        }
+    }
 
     // Parse exclude-indexes if provided
     let excluded_indexes: HashSet<String> = if let Some(exclude_list) = &args.exclude_indexes {
@@ -831,6 +946,23 @@ async fn main() -> Result<()> {
             logger.log(
                 logging::LogLevel::Warning,
                 &format!("Failed to create reindex_logbook table: {}", e),
+            );
+        }
+    }
+
+    // Create reindex_state table
+    logger.log(
+        logging::LogLevel::Info,
+        "Creating reindex_state table for state tracking.",
+    );
+    match schema::create_reindex_state_table(&client).await {
+        Ok(_) => {
+            logger.log(logging::LogLevel::Success, "Reindex state table created/verified.");
+        }
+        Err(e) => {
+            logger.log(
+                logging::LogLevel::Warning,
+                &format!("Failed to create reindex_state table: {}", e),
             );
         }
     }
@@ -953,6 +1085,18 @@ async fn main() -> Result<()> {
         })
         .collect();
 
+    // Initialize state table if not resuming (if resuming, it was already initialized)
+    if !args.resume {
+        if let Some(ref sid) = session_id {
+            if let Err(e) = state::initialize_state_table(&client, &filtered_indexes, sid).await {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!("Failed to initialize state table: {}", e),
+                );
+            }
+        }
+    }
+
     // Re-initialize memory table with filtered indexes
     memory_table
         .initialize_with_indexes(filtered_indexes.clone())
@@ -978,6 +1122,7 @@ async fn main() -> Result<()> {
         let ssl_client_cert = args.ssl_client_cert.clone();
         let ssl_client_key = args.ssl_client_key.clone();
         let user_index_type = args.index_type.clone();
+        let session_id_clone = session_id.clone();
 
         let task = tokio::spawn(async move {
             index_operations::worker_with_memory_table(
@@ -1000,6 +1145,7 @@ async fn main() -> Result<()> {
                 ssl_client_cert,
                 ssl_client_key,
                 user_index_type,
+                session_id_clone,
             )
             .await
         });
