@@ -240,6 +240,14 @@ struct Args {
         help = "Resume reindexing from previous state. If enabled, the tool will load pending/failed indexes from the reindex_state table and continue processing."
     )]
     resume: bool,
+
+    /// Silence mode - only log to file, print only startup and completion messages to terminal
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Silence mode: suppresses all terminal output except startup and completion messages. All logs are still written to the log file."
+    )]
+    silence_mode: bool,
 }
 
 fn get_password_from_pgpass(
@@ -354,8 +362,13 @@ async fn main() -> Result<()> {
         ));
     }
 
-    // Initialize logger
-    let logger = logging::Logger::new(args.log_file.clone());
+    // Initialize logger with silence mode if enabled
+    let logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
+    
+    // Print startup message (always visible, even in silence mode)
+    if args.silence_mode {
+        println!("Starting PostgreSQL reindexer (silence mode enabled - logs are being written to {})", args.log_file);
+    }
 
     // Get connection parameters from command line arguments or environment variables
     let host = args
@@ -1189,11 +1202,14 @@ async fn main() -> Result<()> {
 
     let duration = start_time.elapsed();
 
-    // Create a new logger for the final message
-    let final_logger = logging::Logger::new(args.log_file.clone());
+    // Create a new logger for the final message (with silence mode)
+    let final_logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
     let total_processed = completed + failed + skipped + pending + in_progress;
     final_logger.log_completion_message(total_processed, failed, duration, effective_threads);
-    final_logger.log(logging::LogLevel::Success, "Reindex process completed");
+    
+    if !args.silence_mode {
+        final_logger.log(logging::LogLevel::Success, "Reindex process completed");
+    }
 
     Ok(())
 }

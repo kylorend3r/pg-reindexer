@@ -10,11 +10,20 @@ pub enum LogLevel {
 
 pub struct Logger {
     log_file: String,
+    silence_mode: bool,
 }
 
 impl Logger {
+    #[allow(dead_code)]
     pub fn new(log_file: String) -> Self {
-        Self { log_file }
+        Self::new_with_silence(log_file, false)
+    }
+
+    pub fn new_with_silence(log_file: String, silence_mode: bool) -> Self {
+        Self {
+            log_file,
+            silence_mode,
+        }
     }
 
     fn get_timestamp(&self) -> String {
@@ -34,10 +43,37 @@ impl Logger {
 
         let formatted_message = format!("[{}] [{}] {}", timestamp, level_str, message);
 
-        // Print to stdout
+        // Print to stdout only if not in silence mode
+        if !self.silence_mode {
+            println!("{}", formatted_message);
+        }
+
+        // Always write to log file
+        if let Ok(mut file) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_file)
+        {
+            let _ = writeln!(file, "{}", formatted_message);
+        }
+    }
+
+    /// Log to both terminal and file (always prints, even in silence mode)
+    pub fn log_always(&self, level: LogLevel, message: &str) {
+        let timestamp = self.get_timestamp();
+        let level_str = match level {
+            LogLevel::Info => "INFO",
+            LogLevel::Warning => "WARN",
+            LogLevel::Error => "ERROR",
+            LogLevel::Success => "SUCCESS",
+        };
+
+        let formatted_message = format!("[{}] [{}] {}", timestamp, level_str, message);
+
+        // Always print to stdout
         println!("{}", formatted_message);
 
-        // Write to log file
+        // Always write to log file
         if let Ok(mut file) = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -95,15 +131,27 @@ impl Logger {
     pub fn log_completion_message(
         &self,
         total: usize,
-        _failed: usize,
+        failed: usize,
         duration: std::time::Duration,
-        _threads: usize,
+        threads: usize,
     ) {
-        self.log(
-            LogLevel::Info,
-            &format!("Total indexes processed: {}", total),
+        // Always print completion message (even in silence mode)
+        let summary = format!(
+            "Reindexing completed: {} total indexes processed, {} failed, Duration: {:.2?} (using {} threads)",
+            total, failed, duration, threads
         );
-        self.log(LogLevel::Info, &format!("Duration: {:.2?}", duration));
+        self.log_always(LogLevel::Success, &summary);
+        
+        // Also log detailed stats to file
+        if self.silence_mode {
+            self.log(
+                LogLevel::Info,
+                &format!("Total indexes processed: {}", total),
+            );
+            self.log(LogLevel::Info, &format!("Failed indexes: {}", failed));
+            self.log(LogLevel::Info, &format!("Duration: {:.2?}", duration));
+            self.log(LogLevel::Info, &format!("Threads used: {}", threads));
+        }
     }
 
     pub fn log_dry_run(&self, indexes: &[crate::types::IndexInfo]) {
