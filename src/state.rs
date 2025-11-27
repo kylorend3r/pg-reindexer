@@ -172,3 +172,47 @@ pub async fn has_pending_indexes(client: &Client, session_id: Option<&str>) -> R
     }
 }
 
+/// Load pending indexes from state table (excludes completed and skipped)
+pub async fn load_pending_indexes(
+    client: &Client,
+    schema_name: &str,
+    table_name: Option<&str>,
+) -> Result<Vec<IndexInfo>> {
+    let query = if table_name.is_some() {
+        r#"
+        SELECT schema_name, table_name, index_name, index_type
+        FROM reindexer.reindex_state
+        WHERE schema_name = $1 
+        AND table_name = $2
+        AND state NOT IN ('completed', 'skipped')
+        ORDER BY index_name
+        "#
+    } else {
+        r#"
+        SELECT schema_name, table_name, index_name, index_type
+        FROM reindexer.reindex_state
+        WHERE schema_name = $1 
+        AND state NOT IN ('completed', 'skipped')
+        ORDER BY index_name
+        "#
+    };
+
+    let rows = if let Some(table) = table_name {
+        client.query(query, &[&schema_name, &table]).await
+    } else {
+        client.query(query, &[&schema_name]).await
+    }
+    .context("Failed to load pending indexes from state table")?;
+
+    let mut indexes = Vec::new();
+    for row in rows {
+        indexes.push(IndexInfo {
+            schema_name: row.get(0),
+            table_name: row.get(1),
+            index_name: row.get(2),
+            index_type: row.get(3),
+        });
+    }
+
+    Ok(indexes)
+}
