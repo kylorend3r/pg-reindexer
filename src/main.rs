@@ -747,15 +747,15 @@ async fn main() -> Result<()> {
                         "Resume mode: No pending indexes found. Starting fresh session.",
                     );
                     // Start fresh
-                    let indexes = get_indexes_in_schema(
-                        &client,
-                        &args.schema,
-                        args.table.as_deref(),
+    let indexes = get_indexes_in_schema(
+        &client,
+        &args.schema,
+        args.table.as_deref(),
                         args.min_size_gb,
-                        args.max_size_gb,
+        args.max_size_gb,
                         &args.index_type,
-                    )
-                    .await?;
+    )
+    .await?;
                     
                     let session_id = state::generate_session_id();
                     state::initialize_state_table(&client, &indexes, &session_id).await?;
@@ -805,45 +805,27 @@ async fn main() -> Result<()> {
         Some(state::generate_session_id())
     };
 
-    // Get all indexes in the specified schema (and optionally table)
-    // Always discover from database first, then merge with state table when resuming
-    let indexes = get_indexes_in_schema(
-        &client,
-        &args.schema,
-        args.table.as_deref(),
-        args.min_size_gb,
-        args.max_size_gb,
-        &args.index_type,
-    )
-    .await?;
-
-    // If resuming, merge discovered indexes with state table
-    // This ensures we don't miss any indexes that weren't added to state table yet
-    if args.resume {
+    // Get indexes - when resuming, load from state table; otherwise discover from database
+    let indexes = if args.resume {
+        // Resume mode: Load pending indexes from state table
         logger.log(
             logging::LogLevel::Info,
-            &format!("Resume mode: Discovered {} indexes from database. Merging with state table...", indexes.len()),
+            "Resume mode: Loading pending indexes from state table...",
         );
         
-        if let Some(ref sid) = session_id {
-            // Initialize/update state table with all discovered indexes
-            // This will:
-            // - Add any new indexes not in state table as 'pending'
-            // - Reset 'in_progress' to 'pending' for crashed sessions
-            // - Keep existing 'pending' and 'failed' states
-            if let Err(e) = state::initialize_state_table(&client, &indexes, sid).await {
-                logger.log(
-                    logging::LogLevel::Warning,
-                    &format!("Failed to merge indexes with state table: {}", e),
-                );
-            } else {
-                logger.log(
-                    logging::LogLevel::Success,
-                    "Successfully merged discovered indexes with state table.",
-                );
-            }
-        }
-    }
+        state::load_pending_indexes(&client, &args.schema, args.table.as_deref()).await?
+    } else {
+        // Normal mode: Discover indexes from database
+        get_indexes_in_schema(
+            &client,
+            &args.schema,
+            args.table.as_deref(),
+            args.min_size_gb,
+            args.max_size_gb,
+            &args.index_type,
+        )
+        .await?
+    };
 
     // Parse exclude-indexes if provided
     let excluded_indexes: HashSet<String> = if let Some(exclude_list) = &args.exclude_indexes {
@@ -868,19 +850,41 @@ async fn main() -> Result<()> {
     }
 
     if indexes.is_empty() {
-        if let Some(table) = &args.table {
-            logger.log(
-                logging::LogLevel::Warning,
-                &format!(
-                    "No indexes found in schema '{}' for table '{}'",
-                args.schema, table
-                ),
-            );
+        if args.resume {
+            // Resume mode: No pending indexes found
+            if let Some(table) = &args.table {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!(
+                        "Resume mode: No pending indexes found in state table for schema '{}' and table '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
+                        args.schema, table
+                    ),
+                );
+            } else {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!(
+                        "Resume mode: No pending indexes found in state table for schema '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
+                        args.schema
+                    ),
+                );
+            }
         } else {
-            logger.log(
-                logging::LogLevel::Warning,
-                &format!("No indexes found in schema '{}'", args.schema),
-            );
+            // Normal mode: No indexes found
+            if let Some(table) = &args.table {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!(
+                        "No indexes found in schema '{}' for table '{}'",
+                        args.schema, table
+                    ),
+                );
+            } else {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!("No indexes found in schema '{}'", args.schema),
+                );
+            }
         }
         return Ok(());
     }
@@ -1081,6 +1085,7 @@ async fn main() -> Result<()> {
     }
 
     // Filter out excluded indexes and orphaned _ccnew indexes from processing
+    // Note: When resuming, indexes are already filtered (only pending ones loaded from state table)
     let filtered_indexes: Vec<_> = indexes.into_iter()
         .filter(|index| {
             // Check if index is in exclude list
