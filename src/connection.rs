@@ -1,3 +1,7 @@
+use crate::config::{
+    MILLISECONDS_PER_SECOND, DEFAULT_DEADLOCK_TIMEOUT, MAX_MAINTENANCE_IO_CONCURRENCY,
+    PARALLEL_WORKERS_SAFETY_DIVISOR,
+};
 use anyhow::{Context, Result};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
@@ -31,7 +35,7 @@ pub async fn set_session_parameters(
         .context("Set log_statement to 'all'.")?;
 
     // Set lock_timeout (convert from seconds to milliseconds)
-    let lock_timeout_ms = lock_timeout_seconds * 1000;
+    let lock_timeout_ms = lock_timeout_seconds * MILLISECONDS_PER_SECOND;
     client
         .execute(
             &format!("SET lock_timeout TO '{}ms';", lock_timeout_ms),
@@ -40,9 +44,9 @@ pub async fn set_session_parameters(
         .await
         .context("Set the lock_timeout.")?;
 
-    // Set deadlock_timeout to 1 second
+    // Set deadlock_timeout
     client
-        .execute("SET deadlock_timeout TO '1s';", &[])
+        .execute(&format!("SET deadlock_timeout TO '{}';", DEFAULT_DEADLOCK_TIMEOUT), &[])
         .await
         .context("Set the deadlock_timeout.")?;
 
@@ -72,7 +76,7 @@ pub async fn set_session_parameters(
             .context("Failed to parse max_parallel_workers value")?;
 
         // Safety check: ensure max_parallel_maintenance_workers is less than max_parallel_workers/2
-        let safe_limit = max_parallel_workers / 2;
+        let safe_limit = max_parallel_workers / PARALLEL_WORKERS_SAFETY_DIVISOR;
         if max_parallel_maintenance_workers >= max_parallel_workers {
             return Err(anyhow::anyhow!(
                 "max_parallel_maintenance_workers ({}) must be less than max_parallel_workers ({})",
@@ -107,11 +111,12 @@ pub async fn set_session_parameters(
         ));
     }
 
-    // Validate maintenance_io_concurrency (max 512)
-    if maintenance_io_concurrency > 512 {
+    // Validate maintenance_io_concurrency
+    if maintenance_io_concurrency > MAX_MAINTENANCE_IO_CONCURRENCY {
         return Err(anyhow::anyhow!(
-            "maintenance_io_concurrency ({}) must be 512 or less",
-            maintenance_io_concurrency
+            "maintenance_io_concurrency ({}) must be {} or less",
+            maintenance_io_concurrency,
+            MAX_MAINTENANCE_IO_CONCURRENCY
         ));
     }
 

@@ -1,3 +1,4 @@
+use crate::config::DEFAULT_RETRY_DELAY_MS;
 use crate::logging;
 use crate::memory_table::SharedIndexMemoryTable;
 use crate::types::IndexInfo;
@@ -338,7 +339,7 @@ pub async fn worker_with_memory_table(
             }
         } else {
             // No available indexes, wait a bit before trying again
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(DEFAULT_RETRY_DELAY_MS)).await;
         }
     }
 

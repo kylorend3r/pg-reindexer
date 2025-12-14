@@ -1,5 +1,10 @@
 use crate::connection::set_session_parameters;
 use crate::index_operations::get_indexes_in_schema;
+use crate::config::{
+    DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT, DEFAULT_POSTGRES_DATABASE,
+    DEFAULT_POSTGRES_USERNAME, MAX_THREAD_COUNT, DEFAULT_POSTGRES_MAINTENANCE_WORKERS,
+    MAX_MAINTENANCE_WORK_MEM_GB, MAX_BLOAT_THRESHOLD_PERCENTAGE, MIN_BLOAT_THRESHOLD_PERCENTAGE,
+};
 use anyhow::{Context, Result};
 use clap::Parser;
 use native_tls::{Certificate, Identity, TlsConnector};
@@ -7,10 +12,8 @@ use postgres_native_tls::MakeTlsConnector;
 use std::{collections::HashSet, env, fs, path::Path, sync::Arc};
 use tokio_postgres::{Config, NoTls, config::SslMode};
 
-// Application constants
-const MAX_MAINTENANCE_WORK_MEM_GB: u64 = 32;
-
 mod checks;
+mod config;
 mod connection;
 mod index_operations;
 mod logging;
@@ -328,11 +331,13 @@ async fn main() -> Result<()> {
 
     // Validate bloat threshold if provided
     if let Some(threshold) = args.reindex_only_bloated
-        && threshold > 100
+        && threshold > MAX_BLOAT_THRESHOLD_PERCENTAGE
     {
         return Err(anyhow::anyhow!(
-            "Bloat threshold ({}) must be between 0 and 100",
-            threshold
+            "Bloat threshold ({}) must be between {} and {}",
+            threshold,
+            MIN_BLOAT_THRESHOLD_PERCENTAGE,
+            MAX_BLOAT_THRESHOLD_PERCENTAGE
         ));
     }
 
@@ -374,22 +379,22 @@ async fn main() -> Result<()> {
     let host = args
         .host
         .or_else(|| env::var("PG_HOST").ok())
-        .unwrap_or_else(|| "localhost".to_string());
+        .unwrap_or_else(|| DEFAULT_POSTGRES_HOST.to_string());
 
     let port = args
         .port
         .or_else(|| env::var("PG_PORT").ok().and_then(|p| p.parse().ok()))
-        .unwrap_or(5432);
+        .unwrap_or(DEFAULT_POSTGRES_PORT);
 
     let database = args
         .database
         .or_else(|| env::var("PG_DATABASE").ok())
-        .unwrap_or_else(|| "postgres".to_string());
+        .unwrap_or_else(|| DEFAULT_POSTGRES_DATABASE.to_string());
 
     let username = args
         .username
         .or_else(|| env::var("PG_USER").ok())
-        .unwrap_or_else(|| "postgres".to_string());
+        .unwrap_or_else(|| DEFAULT_POSTGRES_USERNAME.to_string());
 
     let password = args
         .password
@@ -556,10 +561,11 @@ async fn main() -> Result<()> {
     );
 
     // Check maximum thread limit
-    if args.threads > 32 {
+    if args.threads > MAX_THREAD_COUNT {
         return Err(anyhow::anyhow!(
-            "Thread count ({}) exceeds maximum limit of 32. Please reduce the number of threads.",
-            args.threads
+            "Thread count ({}) exceeds maximum limit of {}. Please reduce the number of threads.",
+            args.threads,
+            MAX_THREAD_COUNT
         ));
     }
 
@@ -578,7 +584,7 @@ async fn main() -> Result<()> {
         // Calculate total workers that would be used
         // When max_parallel_maintenance_workers is 0, PostgreSQL uses default (typically 2)
         let effective_maintenance_workers = if args.max_parallel_maintenance_workers == 0 {
-            2 // Default PostgreSQL behavior
+            DEFAULT_POSTGRES_MAINTENANCE_WORKERS // Default PostgreSQL behavior
         } else {
             args.max_parallel_maintenance_workers
         };
