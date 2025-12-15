@@ -5,6 +5,18 @@ use crate::types::{IndexInfo, IndexFilterType};
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
+/// Check if an index name matches PostgreSQL's temporary concurrent reindex pattern
+/// This matches names like "_ccnew", "_ccnew1", "_ccnew2", etc.
+pub fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
+    if let Some(ccnew_pos) = index_name.find("_ccnew") {
+        // Check if the part after "_ccnew" is either empty or consists only of digits
+        let after_ccnew = &index_name[ccnew_pos + 6..];
+        after_ccnew.is_empty() || after_ccnew.chars().all(|c| c.is_ascii_digit())
+    } else {
+        false
+    }
+}
+
 pub async fn get_indexes_in_schema(
     client: &tokio_postgres::Client,
     schema_name: &str,
@@ -672,4 +684,76 @@ pub async fn clean_orphaned_ccnew_index(
             ))
         }
     }
+}
+
+/// Save excluded indexes to logbook before filtering them out
+pub async fn save_excluded_indexes_to_logbook(
+    client: &tokio_postgres::Client,
+    indexes: &[IndexInfo],
+    excluded_indexes: &std::collections::HashSet<String>,
+    index_type: IndexFilterType,
+    logger: &logging::Logger,
+) -> Result<()> {
+    for index in indexes {
+        if excluded_indexes.contains(&index.index_name) {
+            logger.log(
+                logging::LogLevel::Info,
+                &format!("Excluding index from reindexing: {}", index.index_name),
+            );
+
+            // Save excluded index to logbook
+            let index_data = crate::save::IndexData {
+                schema_name: index.schema_name.clone(),
+                index_name: index.index_name.clone(),
+                index_type: index_type.to_string(),
+                reindex_status: crate::types::ReindexStatus::Excluded,
+                before_size: None,
+                after_size: None,
+                size_change: None,
+                reindex_duration: None,
+            };
+
+            if let Err(e) = crate::save::save_index_info(client, &index_data).await {
+                logger.log(
+                    logging::LogLevel::Error,
+                    &format!(
+                        "Failed to save excluded index info for {}.{}: {}",
+                        index.schema_name, index.index_name, e
+                    ),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Filter out excluded indexes and orphaned _ccnew indexes from processing
+pub fn filter_indexes(
+    indexes: Vec<IndexInfo>,
+    excluded_indexes: &std::collections::HashSet<String>,
+    logger: &logging::Logger,
+) -> Vec<IndexInfo> {
+    indexes
+        .into_iter()
+        .filter(|index| {
+            // Check if index is in exclude list
+            if excluded_indexes.contains(&index.index_name) {
+                return false;
+            }
+
+            // Check if index is a temporary concurrent reindex index
+            if is_temporary_concurrent_reindex_index(&index.index_name) {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!(
+                        "Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}",
+                        index.index_name
+                    ),
+                );
+                return false;
+            }
+
+            true
+        })
+        .collect()
 }

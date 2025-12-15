@@ -312,17 +312,6 @@ fn get_password_from_pgpass(
     Ok(None)
 }
 
-/// Check if an index name matches PostgreSQL's temporary concurrent reindex pattern
-/// This matches names like "_ccnew", "_ccnew1", "_ccnew2", etc.
-fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
-    if let Some(ccnew_pos) = index_name.find("_ccnew") {
-        // Check if the part after "_ccnew" is either empty or consists only of digits
-        let after_ccnew = &index_name[ccnew_pos + 6..];
-        after_ccnew.is_empty() || after_ccnew.chars().all(|c| c.is_ascii_digit())
-    } else {
-        false
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -794,7 +783,7 @@ async fn main() -> Result<()> {
         );
 
         for index in &indexes {
-            if is_temporary_concurrent_reindex_index(&index.index_name)
+            if index_operations::is_temporary_concurrent_reindex_index(&index.index_name)
                 && let Err(e) = index_operations::clean_orphaned_ccnew_index(
                     &client,
                     &index.schema_name,
@@ -815,55 +804,18 @@ async fn main() -> Result<()> {
     }
 
     // Save excluded indexes to logbook before filtering them out
-    for index in &indexes {
-        if excluded_indexes.contains(&index.index_name) {
-            logger_arc.log(
-                logging::LogLevel::Info,
-                &format!("Excluding index from reindexing: {}", index.index_name),
-            );
-
-            // Save excluded index to logbook
-            let index_data = crate::save::IndexData {
-                schema_name: index.schema_name.clone(),
-                index_name: index.index_name.clone(),
-                index_type: args.index_type.to_string(),
-                reindex_status: crate::types::ReindexStatus::Excluded,
-                before_size: None,
-                after_size: None,
-                size_change: None,
-                reindex_duration: None,
-            };
-
-            if let Err(e) = crate::save::save_index_info(&client, &index_data).await {
-                logger_arc.log(
-                    logging::LogLevel::Error,
-                    &format!(
-                        "Failed to save excluded index info for {}.{}: {}",
-                        index.schema_name, index.index_name, e
-                    ),
-                );
-            }
-        }
-    }
+    index_operations::save_excluded_indexes_to_logbook(
+        &client,
+        &indexes,
+        &excluded_indexes,
+        args.index_type,
+        &logger_arc,
+    )
+    .await?;
 
     // Filter out excluded indexes and orphaned _ccnew indexes from processing
     // Note: When resuming, indexes are already filtered (only pending ones loaded from state table)
-    let filtered_indexes: Vec<_> = indexes.into_iter()
-        .filter(|index| {
-            // Check if index is in exclude list
-            if excluded_indexes.contains(&index.index_name) {
-                return false;
-            }
-
-            // Check if index is a temporary concurrent reindex index
-            if is_temporary_concurrent_reindex_index(&index.index_name) {
-                logger_arc.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index.index_name));
-                return false;
-            }
-
-            true
-        })
-        .collect();
+    let filtered_indexes = index_operations::filter_indexes(indexes, &excluded_indexes, &logger_arc);
 
     // Initialize state table if not resuming (if resuming, it was already initialized)
     if !args.resume {
