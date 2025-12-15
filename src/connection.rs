@@ -34,37 +34,35 @@ pub async fn set_session_parameters(
         .await
         .context("Set log_statement to 'all'.")?;
 
-    // Set lock_timeout using parameterized query
-    // PostgreSQL SET command accepts parameters when passed as text and cast to interval
-    // This is safer than string formatting as the parameter is properly escaped by the driver
-    let lock_timeout_ms = lock_timeout_seconds * MILLISECONDS_PER_SECOND;
-    let lock_timeout_interval = format!("{}ms", lock_timeout_ms);
-    // Use parameterized query: SET accepts text parameters that are cast to the appropriate type
+    // Set lock_timeout
+    // PostgreSQL SET command doesn't support parameterized queries with type casting
+    // Since lock_timeout_seconds is a u64, it's safe to format directly
+    let lock_timeout_sql = if lock_timeout_seconds == 0 {
+        "SET lock_timeout TO '0'".to_string()
+    } else {
+        let lock_timeout_ms = lock_timeout_seconds * MILLISECONDS_PER_SECOND;
+        format!("SET lock_timeout TO '{}ms'", lock_timeout_ms)
+    };
     client
-        .execute(
-            "SET lock_timeout TO $1::interval",
-            &[&lock_timeout_interval],
-        )
+        .execute(&lock_timeout_sql, &[])
         .await
         .context("Set the lock_timeout.")?;
 
-    // Set deadlock_timeout using parameterized query
+    // Set deadlock_timeout
+    // PostgreSQL SET command doesn't support parameterized queries
+    // Since DEFAULT_DEADLOCK_TIMEOUT is a constant string, it's safe to format directly
+    let deadlock_timeout_sql = format!("SET deadlock_timeout TO '{}'", DEFAULT_DEADLOCK_TIMEOUT);
     client
-        .execute(
-            "SET deadlock_timeout TO $1",
-            &[&DEFAULT_DEADLOCK_TIMEOUT],
-        )
+        .execute(&deadlock_timeout_sql, &[])
         .await
         .context("Set the deadlock_timeout.")?;
 
-    // Set maintenance_work_mem using parameterized query
-    // Format the value as "XGB" and pass as parameter
-    let maintenance_work_mem_value = format!("{}GB", maintenance_work_mem_gb);
+    // Set maintenance_work_mem
+    // PostgreSQL SET command doesn't support parameterized queries
+    // Since maintenance_work_mem_gb is a u64, it's safe to format directly
+    let maintenance_work_mem_sql = format!("SET maintenance_work_mem TO '{}GB'", maintenance_work_mem_gb);
     client
-        .execute(
-            "SET maintenance_work_mem TO $1",
-            &[&maintenance_work_mem_value],
-        )
+        .execute(&maintenance_work_mem_sql, &[])
         .await
         .context("Set the maintenance work mem.")?;
 
@@ -98,13 +96,15 @@ pub async fn set_session_parameters(
             ));
         }
 
-        // Set max_parallel_maintenance_workers using parameterized query
-        let max_parallel_maintenance_workers_str = max_parallel_maintenance_workers.to_string();
+        // Set max_parallel_maintenance_workers
+        // PostgreSQL SET command doesn't support parameterized queries
+        // Since max_parallel_maintenance_workers is a u64, it's safe to format directly
+        let max_parallel_maintenance_workers_sql = format!(
+            "SET max_parallel_maintenance_workers TO {}",
+            max_parallel_maintenance_workers
+        );
         client
-            .execute(
-                "SET max_parallel_maintenance_workers TO $1",
-                &[&max_parallel_maintenance_workers_str],
-            )
+            .execute(&max_parallel_maintenance_workers_sql, &[])
             .await
             .context("Set the max_parallel_maintenance_workers.")?;
     } else {
@@ -122,13 +122,15 @@ pub async fn set_session_parameters(
         ));
     }
 
-    // Set maintenance_io_concurrency using parameterized query
-    let maintenance_io_concurrency_str = maintenance_io_concurrency.to_string();
+    // Set maintenance_io_concurrency
+    // PostgreSQL SET command doesn't support parameterized queries
+    // Since maintenance_io_concurrency is a u64, it's safe to format directly
+    let maintenance_io_concurrency_sql = format!(
+        "SET maintenance_io_concurrency TO {}",
+        maintenance_io_concurrency
+    );
     client
-        .execute(
-            "SET maintenance_io_concurrency TO $1",
-            &[&maintenance_io_concurrency_str],
-        )
+        .execute(&maintenance_io_concurrency_sql, &[])
         .await
         .context("Set the maintenance_io_concurrency.")?;
 
