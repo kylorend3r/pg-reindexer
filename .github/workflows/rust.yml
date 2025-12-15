@@ -30,6 +30,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Run CLI Validation Tests
+        run: cargo test --test cli_validation -- --nocapture
+      - name: Run Logging and Dry-Run Tests
+        run: cargo test --test logging_and_dry_run -- --ignored --nocapture
+
       - name: Build debug binary
         run: cargo build
 
