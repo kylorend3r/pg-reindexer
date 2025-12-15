@@ -1,4 +1,4 @@
-use crate::connection::set_session_parameters;
+use crate::connection::{create_connection_ssl, set_session_parameters};
 use crate::index_operations::get_indexes_in_schema;
 use crate::config::{
     effective_maintenance_workers, DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT, DEFAULT_POSTGRES_DATABASE,
@@ -7,10 +7,7 @@ use crate::config::{
 };
 use anyhow::{Context, Result};
 use clap::Parser;
-use native_tls::{Certificate, Identity, TlsConnector};
-use postgres_native_tls::MakeTlsConnector;
 use std::{collections::HashSet, env, fs, path::Path, sync::Arc};
-use tokio_postgres::{Config, NoTls, config::SslMode};
 
 mod checks;
 mod config;
@@ -432,122 +429,16 @@ async fn main() -> Result<()> {
     }
 
     // Connect to PostgreSQL with SSL support
-    let client = if args.ssl {
-        logger.log(
-            logging::LogLevel::Info,
-            "Creating connection to PostgreSQL",
-        );
-        // Parse connection string into Config
-        let mut config: Config = connection_string
-            .parse()
-            .context("Failed to parse connection string")?;
-
-        // Set SSL mode
-        config.ssl_mode(SslMode::Require);
-
-        let (client, connection) = {
-            let mut tls_builder = TlsConnector::builder();
-
-            // Handle custom CA certificate
-            if let Some(ca_cert_path) = &args.ssl_ca_cert {
-                logger.log(
-                    logging::LogLevel::Info,
-                    &format!("Loading CA certificate from: {}", ca_cert_path),
-                );
-                let ca_cert_data =
-                    fs::read(ca_cert_path).context("Failed to read CA certificate file")?;
-                let ca_cert = Certificate::from_pem(&ca_cert_data)
-                    .context("Failed to parse CA certificate")?;
-                tls_builder.add_root_certificate(ca_cert);
-            }
-
-            // Handle client certificate and key
-            if let (Some(client_cert_path), Some(client_key_path)) =
-                (&args.ssl_client_cert, &args.ssl_client_key)
-            {
-                logger.log(
-                    logging::LogLevel::Info,
-                    &format!("Loading client certificate from: {}", client_cert_path),
-                );
-                let client_cert_data =
-                    fs::read(client_cert_path).context("Failed to read client certificate file")?;
-
-                logger.log(
-                    logging::LogLevel::Info,
-                    &format!("Loading client key from: {}", client_key_path),
-                );
-                let client_key_data =
-                    fs::read(client_key_path).context("Failed to read client key file")?;
-
-                // Combine certificate and key into a single PEM for Identity
-                let mut identity_data = client_cert_data.clone();
-                identity_data.extend_from_slice(&client_key_data);
-
-                let identity = Identity::from_pkcs12(&identity_data, "")
-                    .or_else(|_| {
-                        // Try PKCS8 format if PKCS12 fails
-                        Identity::from_pkcs8(&client_cert_data, &client_key_data)
-                    })
-                    .context("Failed to parse client certificate and key")?;
-
-                tls_builder.identity(identity);
-            } else if args.ssl_client_cert.is_some() || args.ssl_client_key.is_some() {
-                return Err(anyhow::anyhow!(
-                    "Both --ssl-client-cert and --ssl-client-key must be provided together"
-                ));
-            }
-
-            // Handle invalid certificate acceptance
-            if args.ssl_self_signed {
-                logger.log(
-                    logging::LogLevel::Info,
-                    "Connection configured to allow self-signed certificates",
-                );
-                tls_builder.danger_accept_invalid_certs(true);
-            }
-
-            let tls_connector = tls_builder
-                .build()
-                .context("Failed to create TLS connector")?;
-
-            let tls = MakeTlsConnector::new(tls_connector);
-            config
-                .connect(tls)
-                .await
-                .context("ERROR: Failed to connect to PostgreSQL with SSL")?
-        };
-
-        // Spawn the connection to run in the background
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Connection error: {}", e);
-            }
-        });
-
-        client
-    } else {
-        logger.log(
-            logging::LogLevel::Info,
-            "Creating connection to PostgreSQL",
-        );
-        // Connect without SSL
-    let (client, connection) = tokio_postgres::connect(&connection_string, NoTls)
-        .await
-        .context("ERROR: Failed to connect to PostgreSQL")?;
-
-    // Spawn the connection to run in the background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-        logger.log(
-            logging::LogLevel::Success,
-            "Successfully connected to PostgreSQL",
-        );
-        client
-    };
+    let client = create_connection_ssl(
+        &connection_string,
+        args.ssl,
+        args.ssl_self_signed,
+        args.ssl_ca_cert.clone(),
+        args.ssl_client_cert.clone(),
+        args.ssl_client_key.clone(),
+        &logger,
+    )
+    .await?;
 
     logger.log(
         logging::LogLevel::Success,
