@@ -8,6 +8,7 @@
 .DS_Store
 *.swp
 *.swo
+.cursor/
 
 # test and debug files
 test_commands.sh
