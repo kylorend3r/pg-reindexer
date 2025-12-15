@@ -1,20 +1,18 @@
-use crate::connection::{create_connection_ssl, set_session_parameters};
+use crate::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
 use crate::index_operations::get_indexes_in_schema;
-use crate::config::{
-    DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT, DEFAULT_POSTGRES_DATABASE,
-    DEFAULT_POSTGRES_USERNAME,
-};
 use crate::types::IndexFilterType;
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::{collections::HashSet, env, fs, path::Path, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 mod checks;
 mod config;
 mod connection;
+mod credentials;
 mod index_operations;
 mod logging;
 mod memory_table;
+mod orchestrator;
 mod queries;
 mod save;
 mod schema;
@@ -252,67 +250,6 @@ struct Args {
     silence_mode: bool,
 }
 
-fn get_password_from_pgpass(
-    host: &str,
-    port: u16,
-    database: &str,
-    username: &str,
-) -> Result<Option<String>> {
-    // Get the path to .pgpass file
-    let pgpass_path = env::var("PGPASSFILE").unwrap_or_else(|_| {
-        let home = env::var("HOME").unwrap_or_else(|_| env::var("USERPROFILE").unwrap_or_default());
-        format!("{}/.pgpass", home)
-    });
-
-    let pgpass_path = Path::new(&pgpass_path);
-
-    if !pgpass_path.exists() {
-        return Ok(None);
-    }
-
-    // Read the .pgpass file
-    let content = fs::read_to_string(pgpass_path).context("Failed to read .pgpass file")?;
-
-    // Parse each line
-    for line in content.lines() {
-        let line = line.trim();
-
-        // Skip empty lines and comments
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        // Split by colon (format: hostname:port:database:username:password)
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() != 5 {
-            continue; // Skip malformed lines
-        }
-
-        let file_host = parts[0];
-        let file_port = parts[1];
-        let file_database = parts[2];
-        let file_username = parts[3];
-        let file_password = parts[4];
-
-        // Check if this line matches our connection parameters
-        // Use wildcard matching (empty or '*' means match any)
-        let host_matches = file_host.is_empty() || file_host == "*" || file_host == host;
-        let port_matches =
-            file_port.is_empty() || file_port == "*" || file_port == port.to_string();
-        let database_matches =
-            file_database.is_empty() || file_database == "*" || file_database == database;
-        let username_matches =
-            file_username.is_empty() || file_username == "*" || file_username == username;
-
-        if host_matches && port_matches && database_matches && username_matches {
-            return Ok(Some(file_password.to_string()));
-        }
-    }
-
-    Ok(None)
-}
-
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -336,70 +273,42 @@ async fn main() -> Result<()> {
         println!("Starting PostgreSQL reindexer (silence mode enabled - logs are being written to {})", args.log_file);
     }
 
-    // Get connection parameters from command line arguments or environment variables
-    let host = args
-        .host
-        .or_else(|| env::var("PG_HOST").ok())
-        .unwrap_or_else(|| DEFAULT_POSTGRES_HOST.to_string());
+    // Build connection configuration from arguments
+    let connection_config = ConnectionConfig::from_args(
+        args.host.clone(),
+        args.port,
+        args.database.clone(),
+        args.username.clone(),
+        args.password.clone(),
+        args.ssl,
+        args.ssl_self_signed,
+        args.ssl_ca_cert.clone(),
+        args.ssl_client_cert.clone(),
+        args.ssl_client_key.clone(),
+    )?;
 
-    let port = args
-        .port
-        .or_else(|| env::var("PG_PORT").ok().and_then(|p| p.parse().ok()))
-        .unwrap_or(DEFAULT_POSTGRES_PORT);
-
-    let database = args
-        .database
-        .or_else(|| env::var("PG_DATABASE").ok())
-        .unwrap_or_else(|| DEFAULT_POSTGRES_DATABASE.to_string());
-
-    let username = args
-        .username
-        .or_else(|| env::var("PG_USER").ok())
-        .unwrap_or_else(|| DEFAULT_POSTGRES_USERNAME.to_string());
-
-    let password = args
-        .password
-        .or_else(|| {
-            let env_password = env::var("PG_PASSWORD").ok();
-            // If PG_PASSWORD is set but empty, treat it as None to allow pgpass fallback
-            if env_password.as_ref().is_some_and(|p| p.is_empty()) {
-                None
-            } else {
-                env_password
-            }
-        })
-        .or_else(|| get_password_from_pgpass(&host, port, &database, &username).unwrap_or(None));
-
-    // Build connection string
-    let mut connection_string = format!(
-        "host={} port={} dbname={} user={}",
-        host, port, database, username
-    );
-
-    if let Some(pwd) = password {
-        connection_string.push_str(&format!(" password={}", pwd));
-    }
+    let connection_string = connection_config.build_connection_string();
 
     if args.ssl {
         logger_arc.log(
             logging::LogLevel::Info,
-            &format!("Connecting to PostgreSQL at {}:{} with SSL", host, port),
+            &format!("Connecting to PostgreSQL at {}:{} with SSL", connection_config.host, connection_config.port),
         );
     } else {
         logger_arc.log(
             logging::LogLevel::Info,
-            &format!("Connecting to PostgreSQL at {}:{}", host, port),
+            &format!("Connecting to PostgreSQL at {}:{}", connection_config.host, connection_config.port),
         );
     }
 
     // Connect to PostgreSQL with SSL support
     let client = create_connection_ssl(
         &connection_string,
-        args.ssl,
-        args.ssl_self_signed,
-        args.ssl_ca_cert.clone(),
-        args.ssl_client_cert.clone(),
-        args.ssl_client_key.clone(),
+        connection_config.ssl,
+        connection_config.ssl_self_signed,
+        connection_config.ssl_ca_cert.clone(),
+        connection_config.ssl_client_cert.clone(),
+        connection_config.ssl_client_key.clone(),
         &logger_arc,
     )
     .await?;
@@ -480,47 +389,16 @@ async fn main() -> Result<()> {
     // Log the index size limits for clarity
     logger_arc.log_index_size_limits(args.min_size_gb, args.max_size_gb);
 
+    // Initialize resume manager
+    let resume_manager = state::ResumeManager::new(&client, logger_arc.clone());
+
     // Generate session ID and handle resume logic
-    let session_id = if args.resume {
-        // Check if there are pending indexes in the state table
-        match state::has_pending_indexes(&client, None).await {
-            Ok(has_pending) => {
-                if has_pending {
-                    logger_arc.log(
-                        logging::LogLevel::Info,
-                        "Resume mode: Found pending indexes in state table. Discovering all indexes and merging with state.",
-                    );
-                    // Generate session ID for resume
-                    let session_id = state::generate_session_id();
-                    Some(session_id)
-                } else {
-                    logger_arc.log(
-                        logging::LogLevel::Info,
-                        "Resume mode: No pending indexes found. Starting fresh session.",
-                    );
-                    // Start fresh
-            let indexes = get_indexes_in_schema(
-        &client,
-        &args.schema,
-        args.table.as_deref(),
-                        args.min_size_gb,
-        args.max_size_gb,
-                        args.index_type,
-    )
-    .await?;
-                    
-                    let session_id = state::generate_session_id();
-                    state::initialize_state_table(&client, &indexes, &session_id).await?;
-                    Some(session_id)
-                }
-            }
-            Err(e) => {
-                logger_arc.log(
-                    logging::LogLevel::Warning,
-                    &format!("Failed to check for pending indexes: {}. Starting fresh session.", e),
-                );
-                // Start fresh
-                let indexes = get_indexes_in_schema(
+    let session_id = resume_manager
+        .initialize_session(
+            args.resume,
+            &args.schema,
+            || async {
+                get_indexes_in_schema(
                     &client,
                     &args.schema,
                     args.table.as_deref(),
@@ -528,56 +406,30 @@ async fn main() -> Result<()> {
                     args.max_size_gb,
                     args.index_type,
                 )
-                .await?;
-                
-                let session_id = state::generate_session_id();
-                state::initialize_state_table(&client, &indexes, &session_id).await?;
-                Some(session_id)
-            }
-        }
-    } else {
-        // Normal mode - start from zero by clearing existing state for this schema
-        logger_arc.log(
-            logging::LogLevel::Info,
-            &format!("Starting fresh: clearing any existing state for schema '{}'", args.schema),
-        );
-        
-        if let Err(e) = state::clear_schema_state(&client, &args.schema).await {
-            logger_arc.log(
-                logging::LogLevel::Warning,
-                &format!("Failed to clear existing state for schema '{}': {}", args.schema, e),
-            );
-        } else {
-            logger_arc.log(
-                logging::LogLevel::Success,
-                &format!("Cleared existing state for schema '{}'", args.schema),
-            );
-        }
-        
-        Some(state::generate_session_id())
-    };
+                .await
+            },
+        )
+        .await?;
 
     // Get indexes - when resuming, load from state table; otherwise discover from database
-    let indexes = if args.resume {
-        // Resume mode: Load pending indexes from state table
-        logger_arc.log(
-            logging::LogLevel::Info,
-            "Resume mode: Loading pending indexes from state table...",
-        );
-        
-        state::load_pending_indexes(&client, &args.schema, args.table.as_deref()).await?
-    } else {
-        // Normal mode: Discover indexes from database
-        get_indexes_in_schema(
-            &client,
+    let indexes = resume_manager
+        .load_or_discover_indexes(
+            args.resume,
             &args.schema,
             args.table.as_deref(),
-            args.min_size_gb,
-            args.max_size_gb,
-            args.index_type,
+            || async {
+                get_indexes_in_schema(
+                    &client,
+                    &args.schema,
+                    args.table.as_deref(),
+                    args.min_size_gb,
+                    args.max_size_gb,
+                    args.index_type,
+                )
+                .await
+            },
         )
-        .await?
-    };
+        .await?;
 
     // Parse exclude-indexes if provided
     let excluded_indexes: HashSet<String> = if let Some(exclude_list) = &args.exclude_indexes {
@@ -772,163 +624,70 @@ async fn main() -> Result<()> {
     // Create shared memory table for index management
     let memory_table = Arc::new(memory_table::SharedIndexMemoryTable::new());
 
-    // Create worker tasks
-    let mut tasks = Vec::new();
+    // Create orchestrator
+    let orchestrator = orchestrator::ReindexOrchestrator::new(
+        client,
+        logger_arc.clone(),
+        connection_string.clone(),
+        connection_config,
+    );
 
     // Clean orphaned _ccnew indexes if requested
-    if args.clean_orphaned_indexes {
-        logger_arc.log(
-            logging::LogLevel::Info,
-            "Cleaning orphaned _ccnew indexes...",
-        );
+    orchestrator
+        .clean_orphaned_indexes(&indexes, args.clean_orphaned_indexes)
+        .await?;
 
-        for index in &indexes {
-            if index_operations::is_temporary_concurrent_reindex_index(&index.index_name)
-                && let Err(e) = index_operations::clean_orphaned_ccnew_index(
-                    &client,
-                    &index.schema_name,
-                    &index.index_name,
-                    &logger_arc,
-                )
-                .await
-            {
-                logger_arc.log(
-                    logging::LogLevel::Error,
-                    &format!(
-                        "Failed to drop orphaned index {}.{}: {}",
-                        index.schema_name, index.index_name, e
-                    ),
-                );
-            }
-        }
-    }
+    // Process excluded indexes and filter indexes
+    let filtered_indexes = orchestrator
+        .process_and_filter_indexes(indexes, &excluded_indexes, args.index_type)
+        .await?;
 
-    // Save excluded indexes to logbook before filtering them out
-    index_operations::save_excluded_indexes_to_logbook(
-        &client,
-        &indexes,
-        &excluded_indexes,
-        args.index_type,
-        &logger_arc,
-    )
-    .await?;
-
-    // Filter out excluded indexes and orphaned _ccnew indexes from processing
-    // Note: When resuming, indexes are already filtered (only pending ones loaded from state table)
-    let filtered_indexes = index_operations::filter_indexes(indexes, &excluded_indexes, &logger_arc);
-
-    // Initialize state table if not resuming (if resuming, it was already initialized)
-    if !args.resume {
-        if let Some(ref sid) = session_id {
-            if let Err(e) = state::initialize_state_table(&client, &filtered_indexes, sid).await {
-                logger_arc.log(
-                    logging::LogLevel::Warning,
-                    &format!("Failed to initialize state table: {}", e),
-                );
-            }
-        }
-    }
+    // Initialize state table if needed
+    orchestrator
+        .initialize_state_if_needed(args.resume, &filtered_indexes, session_id.as_deref())
+        .await?;
 
     // Re-initialize memory table with filtered indexes
     memory_table
         .initialize_with_indexes(filtered_indexes.clone())
         .await;
 
-    // Create worker tasks instead of individual index tasks
-    for worker_id in 0..effective_threads {
-        let connection_string = connection_string.clone();
-        let memory_table = memory_table.clone();
-        let logger = logger_arc.clone();
-        let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
-        let max_parallel_maintenance_workers = args.max_parallel_maintenance_workers;
-        let maintenance_io_concurrency = args.maintenance_io_concurrency;
-        let lock_timeout_seconds = args.lock_timeout_seconds;
-        let skip_inactive_replication_slots = args.skip_inactive_replication_slots;
-        let skip_sync_replication_connection = args.skip_sync_replication_connection;
-        let skip_active_vacuums = args.skip_active_vacuums;
-        let bloat_threshold = args.reindex_only_bloated;
-        let concurrently = args.concurrently;
-        let use_ssl = args.ssl;
-        let accept_invalid_certs = args.ssl_self_signed;
-        let ssl_ca_cert = args.ssl_ca_cert.clone();
-        let ssl_client_cert = args.ssl_client_cert.clone();
-        let ssl_client_key = args.ssl_client_key.clone();
-        let user_index_type = args.index_type;
-        let session_id_clone = session_id.clone();
+    // Create worker configuration
+    let worker_config = orchestrator::WorkerConfig {
+        maintenance_work_mem_gb: args.maintenance_work_mem_gb,
+        max_parallel_maintenance_workers: args.max_parallel_maintenance_workers,
+        maintenance_io_concurrency: args.maintenance_io_concurrency,
+        lock_timeout_seconds: args.lock_timeout_seconds,
+        skip_inactive_replication_slots: args.skip_inactive_replication_slots,
+        skip_sync_replication_connection: args.skip_sync_replication_connection,
+        skip_active_vacuums: args.skip_active_vacuums,
+        bloat_threshold: args.reindex_only_bloated,
+        concurrently: args.concurrently,
+        use_ssl: args.ssl,
+        accept_invalid_certs: args.ssl_self_signed,
+        ssl_ca_cert: args.ssl_ca_cert.clone(),
+        ssl_client_cert: args.ssl_client_cert.clone(),
+        ssl_client_key: args.ssl_client_key.clone(),
+        user_index_type: args.index_type,
+        session_id: session_id.clone(),
+    };
 
-        let task = tokio::spawn(async move {
-            index_operations::worker_with_memory_table(
-                worker_id,
-                connection_string.to_string(),
-                memory_table,
-                logger,
-                maintenance_work_mem_gb,
-                max_parallel_maintenance_workers,
-                maintenance_io_concurrency,
-                lock_timeout_seconds,
-                skip_inactive_replication_slots,
-                skip_sync_replication_connection,
-                skip_active_vacuums,
-                bloat_threshold,
-                concurrently,
-                use_ssl,
-                accept_invalid_certs,
-                ssl_ca_cert,
-                ssl_client_cert,
-                ssl_client_key,
-                user_index_type,
-                session_id_clone,
-            )
-            .await
-        });
-
-        tasks.push(task);
-    }
+    // Create and spawn worker tasks
+    let tasks = orchestrator.create_worker_tasks(effective_threads, memory_table.clone(), worker_config);
 
     // Wait for all worker tasks to complete and collect results
-    let mut _error_count = 0;
+    let _error_count = orchestrator.collect_worker_results(tasks).await?;
 
-    for (worker_id, task) in tasks.into_iter().enumerate() {
-        match task.await {
-            Ok(Ok(_)) => {
-                // Worker completed successfully
-                logger_arc.log(
-                    logging::LogLevel::Info,
-                    &format!("Worker {} completed successfully", worker_id),
-                );
-            }
-            Ok(Err(e)) => {
-                _error_count += 1;
-                eprintln!("  ✗ Worker {} failed: {}", worker_id, e);
-                logger_arc.log(
-                    logging::LogLevel::Error,
-                    &format!("Worker {} failed: {}", worker_id, e),
-                );
-            }
-            Err(e) => {
-                _error_count += 1;
-                eprintln!("  ✗ Worker {} panicked: {}", worker_id, e);
-                logger_arc.log(
-                    logging::LogLevel::Error,
-                    &format!("Worker {} panicked: {}", worker_id, e),
-                );
-            }
-        }
-    }
-
-    // Get final statistics from memory table
-    let (pending, in_progress, completed, failed, skipped) = memory_table.get_statistics().await;
-
-    let duration = start_time.elapsed();
-
-    // Create a new logger for the final message (with silence mode)
-    let final_logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
-    let total_processed = completed + failed + skipped + pending + in_progress;
-    final_logger.log_completion_message(total_processed, failed, duration, effective_threads);
-    
-    if !args.silence_mode {
-        final_logger.log(logging::LogLevel::Success, "Reindex process completed");
-    }
+    // Get final statistics and log completion message
+    orchestrator
+        .finalize_and_log_completion(
+            memory_table,
+            start_time,
+            effective_threads,
+            args.log_file.clone(),
+            args.silence_mode,
+        )
+        .await;
 
     Ok(())
 }

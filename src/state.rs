@@ -1,5 +1,7 @@
+use crate::logging::Logger;
 use crate::types::IndexInfo;
 use anyhow::{Context, Result};
+use std::sync::Arc;
 use tokio_postgres::Client;
 use uuid::Uuid;
 
@@ -215,4 +217,134 @@ pub async fn load_pending_indexes(
     }
 
     Ok(indexes)
+}
+
+/// Resume manager for handling resume logic and session initialization
+pub struct ResumeManager<'a> {
+    client: &'a Client,
+    logger: Arc<Logger>,
+}
+
+impl<'a> ResumeManager<'a> {
+    /// Create a new ResumeManager
+    pub fn new(client: &'a Client, logger: Arc<Logger>) -> Self {
+        Self { client, logger }
+    }
+
+    /// Initialize session based on resume mode
+    /// 
+    /// # Arguments
+    /// 
+    /// * `resume` - Whether to resume from previous state
+    /// * `schema_name` - Schema name to work with
+    /// * `discover_indexes` - Function to discover indexes from database (used when starting fresh)
+    /// 
+    /// # Returns
+    /// 
+    /// Returns `Ok(Some(session_id))` if session was initialized, or an error
+    pub async fn initialize_session<F, Fut>(
+        &self,
+        resume: bool,
+        schema_name: &str,
+        discover_indexes: F,
+    ) -> Result<Option<String>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<IndexInfo>>>,
+    {
+        if resume {
+            // Check if there are pending indexes in the state table
+            match has_pending_indexes(&self.client, None).await {
+                Ok(has_pending) => {
+                    if has_pending {
+                        self.logger.log(
+                            crate::logging::LogLevel::Info,
+                            "Resume mode: Found pending indexes in state table. Discovering all indexes and merging with state.",
+                        );
+                        // Generate session ID for resume
+                        let session_id = generate_session_id();
+                        Ok(Some(session_id))
+                    } else {
+                        self.logger.log(
+                            crate::logging::LogLevel::Info,
+                            "Resume mode: No pending indexes found. Starting fresh session.",
+                        );
+                        // Start fresh
+                        let indexes = discover_indexes().await?;
+                        let session_id = generate_session_id();
+                        initialize_state_table(&self.client, &indexes, &session_id).await?;
+                        Ok(Some(session_id))
+                    }
+                }
+                Err(e) => {
+                    self.logger.log(
+                        crate::logging::LogLevel::Warning,
+                        &format!("Failed to check for pending indexes: {}. Starting fresh session.", e),
+                    );
+                    // Start fresh
+                    let indexes = discover_indexes().await?;
+                    let session_id = generate_session_id();
+                    initialize_state_table(&self.client, &indexes, &session_id).await?;
+                    Ok(Some(session_id))
+                }
+            }
+        } else {
+            // Normal mode - start from zero by clearing existing state for this schema
+            self.logger.log(
+                crate::logging::LogLevel::Info,
+                &format!("Starting fresh: clearing any existing state for schema '{}'", schema_name),
+            );
+            
+            if let Err(e) = clear_schema_state(&self.client, schema_name).await {
+                self.logger.log(
+                    crate::logging::LogLevel::Warning,
+                    &format!("Failed to clear existing state for schema '{}': {}", schema_name, e),
+                );
+            } else {
+                self.logger.log(
+                    crate::logging::LogLevel::Success,
+                    &format!("Cleared existing state for schema '{}'", schema_name),
+                );
+            }
+            
+            Ok(Some(generate_session_id()))
+        }
+    }
+
+    /// Load indexes based on resume mode
+    /// 
+    /// # Arguments
+    /// 
+    /// * `resume` - Whether to resume from previous state
+    /// * `schema_name` - Schema name to work with
+    /// * `table_name` - Optional table name to filter by
+    /// * `discover_indexes` - Function to discover indexes from database (used in normal mode)
+    /// 
+    /// # Returns
+    /// 
+    /// Returns the list of indexes to process
+    pub async fn load_or_discover_indexes<F, Fut>(
+        &self,
+        resume: bool,
+        schema_name: &str,
+        table_name: Option<&str>,
+        discover_indexes: F,
+    ) -> Result<Vec<IndexInfo>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<IndexInfo>>>,
+    {
+        if resume {
+            // Resume mode: Load pending indexes from state table
+            self.logger.log(
+                crate::logging::LogLevel::Info,
+                "Resume mode: Loading pending indexes from state table...",
+            );
+            
+            load_pending_indexes(&self.client, schema_name, table_name).await
+        } else {
+            // Normal mode: Discover indexes from database
+            discover_indexes().await
+        }
+    }
 }

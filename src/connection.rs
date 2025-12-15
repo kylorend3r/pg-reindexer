@@ -1,12 +1,111 @@
 use crate::config::{
     MILLISECONDS_PER_SECOND, DEFAULT_DEADLOCK_TIMEOUT, MAX_MAINTENANCE_IO_CONCURRENCY,
-    PARALLEL_WORKERS_SAFETY_DIVISOR,
+    PARALLEL_WORKERS_SAFETY_DIVISOR, DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT,
+    DEFAULT_POSTGRES_DATABASE, DEFAULT_POSTGRES_USERNAME,
 };
+use crate::credentials::get_password_from_pgpass;
 use anyhow::{Context, Result};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
-use std::fs;
+use std::{env, fs};
 use tokio_postgres::{Config, NoTls, config::SslMode};
+
+/// Connection configuration structure
+/// 
+/// Holds all connection parameters needed to connect to PostgreSQL
+#[derive(Debug, Clone)]
+pub struct ConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    pub password: Option<String>,
+    pub ssl: bool,
+    pub ssl_self_signed: bool,
+    pub ssl_ca_cert: Option<String>,
+    pub ssl_client_cert: Option<String>,
+    pub ssl_client_key: Option<String>,
+}
+
+impl ConnectionConfig {
+    /// Build connection configuration from command-line arguments
+    /// 
+    /// Resolves connection parameters in the following order:
+    /// 1. Command-line arguments
+    /// 2. Environment variables (PG_HOST, PG_PORT, PG_DATABASE, PG_USER, PG_PASSWORD)
+    /// 3. Default values
+    /// 
+    /// For password, also checks .pgpass file if not provided via args or env.
+    pub fn from_args(
+        host: Option<String>,
+        port: Option<u16>,
+        database: Option<String>,
+        username: Option<String>,
+        password: Option<String>,
+        ssl: bool,
+        ssl_self_signed: bool,
+        ssl_ca_cert: Option<String>,
+        ssl_client_cert: Option<String>,
+        ssl_client_key: Option<String>,
+    ) -> Result<Self> {
+        let host = host
+            .or_else(|| env::var("PG_HOST").ok())
+            .unwrap_or_else(|| DEFAULT_POSTGRES_HOST.to_string());
+
+        let port = port
+            .or_else(|| env::var("PG_PORT").ok().and_then(|p| p.parse().ok()))
+            .unwrap_or(DEFAULT_POSTGRES_PORT);
+
+        let database = database
+            .or_else(|| env::var("PG_DATABASE").ok())
+            .unwrap_or_else(|| DEFAULT_POSTGRES_DATABASE.to_string());
+
+        let username = username
+            .or_else(|| env::var("PG_USER").ok())
+            .unwrap_or_else(|| DEFAULT_POSTGRES_USERNAME.to_string());
+
+        let password = password
+            .or_else(|| {
+                let env_password = env::var("PG_PASSWORD").ok();
+                // If PG_PASSWORD is set but empty, treat it as None to allow pgpass fallback
+                if env_password.as_ref().is_some_and(|p| p.is_empty()) {
+                    None
+                } else {
+                    env_password
+                }
+            })
+            .or_else(|| {
+                get_password_from_pgpass(&host, port, &database, &username).unwrap_or(None)
+            });
+
+        Ok(Self {
+            host,
+            port,
+            database,
+            username,
+            password,
+            ssl,
+            ssl_self_signed,
+            ssl_ca_cert,
+            ssl_client_cert,
+            ssl_client_key,
+        })
+    }
+
+    /// Build PostgreSQL connection string from configuration
+    pub fn build_connection_string(&self) -> String {
+        let mut connection_string = format!(
+            "host={} port={} dbname={} user={}",
+            self.host, self.port, self.database, self.username
+        );
+
+        if let Some(ref pwd) = self.password {
+            connection_string.push_str(&format!(" password={}", pwd));
+        }
+
+        connection_string
+    }
+}
 
 pub async fn set_session_parameters(
     client: &tokio_postgres::Client,
