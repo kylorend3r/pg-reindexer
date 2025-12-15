@@ -5,6 +5,7 @@ use crate::config::{
     DEFAULT_POSTGRES_USERNAME, MAX_THREAD_COUNT,
     MAX_MAINTENANCE_WORK_MEM_GB, MAX_BLOAT_THRESHOLD_PERCENTAGE, MIN_BLOAT_THRESHOLD_PERCENTAGE,
 };
+use crate::types::IndexFilterType;
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::{collections::HashSet, env, fs, path::Path, sync::Arc};
@@ -117,9 +118,10 @@ struct Args {
     #[arg(
         long,
         default_value = "btree",
-        help = "Index type to reindex: 'btree' for regular b-tree indexes, 'constraint' for primary keys and unique constraints"
+        value_parser = clap::value_parser!(IndexFilterType),
+        help = "Index type to reindex: 'btree' for regular b-tree indexes, 'constraint' for primary keys and unique constraints, 'all' for all index types"
     )]
-    index_type: String,
+    index_type: IndexFilterType,
 
     /// Maximum maintenance work mem in GB (default: 1 GB, max: 32 GB)
     #[arg(
@@ -356,13 +358,7 @@ async fn main() -> Result<()> {
         ));
     }
 
-    // Validate index type
-    if !["btree", "constraint"].contains(&args.index_type.as_str()) {
-        return Err(anyhow::anyhow!(
-            "Invalid index type '{}'. Must be one of: 'btree', 'constraint'",
-            args.index_type
-        ));
-    }
+    // Index type validation is now handled by the enum's FromStr implementation
 
     // Initialize logger with silence mode if enabled
     let logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
@@ -640,13 +636,13 @@ async fn main() -> Result<()> {
                         "Resume mode: No pending indexes found. Starting fresh session.",
                     );
                     // Start fresh
-    let indexes = get_indexes_in_schema(
+            let indexes = get_indexes_in_schema(
         &client,
         &args.schema,
         args.table.as_deref(),
                         args.min_size_gb,
         args.max_size_gb,
-                        &args.index_type,
+                        args.index_type,
     )
     .await?;
                     
@@ -667,7 +663,7 @@ async fn main() -> Result<()> {
                     args.table.as_deref(),
                     args.min_size_gb,
                     args.max_size_gb,
-                    &args.index_type,
+                    args.index_type,
                 )
                 .await?;
                 
@@ -715,7 +711,7 @@ async fn main() -> Result<()> {
             args.table.as_deref(),
             args.min_size_gb,
             args.max_size_gb,
-            &args.index_type,
+            args.index_type,
         )
         .await?
     };
@@ -957,7 +953,7 @@ async fn main() -> Result<()> {
             let index_data = crate::save::IndexData {
                 schema_name: index.schema_name.clone(),
                 index_name: index.index_name.clone(),
-                index_type: args.index_type.clone(),
+                index_type: args.index_type.to_string(),
                 reindex_status: crate::types::ReindexStatus::Excluded,
                 before_size: None,
                 after_size: None,
@@ -1032,7 +1028,7 @@ async fn main() -> Result<()> {
         let ssl_ca_cert = args.ssl_ca_cert.clone();
         let ssl_client_cert = args.ssl_client_cert.clone();
         let ssl_client_key = args.ssl_client_key.clone();
-        let user_index_type = args.index_type.clone();
+        let user_index_type = args.index_type;
         let session_id_clone = session_id.clone();
 
         let task = tokio::spawn(async move {
