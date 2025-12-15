@@ -31,7 +31,8 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --lib --bins
+        # Excludes integration tests in tests/ directory which require database connection
 
       - name: Build debug binary
         run: cargo build
