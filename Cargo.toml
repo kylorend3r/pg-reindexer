@@ -1,6 +1,6 @@
 [package]
 name = "pg-reindexer"
-version = "3.0.1"
+version = "3.0.2"
 edition = "2024"
 description = "A high-performance, production-ready PostgreSQL index maintenance tool written in Rust"
 categories = ["database", "command-line-utilities"]

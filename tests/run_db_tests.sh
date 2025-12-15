@@ -29,6 +29,7 @@ export PG_PASSWORD=${PG_PASSWORD:-test123}
 RUN_CLI=false
 RUN_DB=false
 RUN_LOGGING=false
+RUN_CHAOS=false
 RUN_ALL=true
 
 if [ $# -gt 0 ]; then
@@ -44,6 +45,9 @@ if [ $# -gt 0 ]; then
             --logging|--dry-run)
                 RUN_LOGGING=true
                 ;;
+            --chaos|--chaos-tests)
+                RUN_CHAOS=true
+                ;;
             --all)
                 RUN_ALL=true
                 ;;
@@ -54,6 +58,7 @@ if [ $# -gt 0 ]; then
                 echo "  --cli, --cli-validation    Run CLI validation tests only"
                 echo "  --db, --db-validation      Run database integration tests only"
                 echo "  --logging, --dry-run      Run logging and dry-run tests only"
+                echo "  --chaos, --chaos-tests    Run chaos tests only (requires database)"
                 echo "  --all                     Run all tests (default)"
                 echo "  --help, -h                Show this help message"
                 echo ""
@@ -67,6 +72,7 @@ if [ $# -gt 0 ]; then
                 echo "Examples:"
                 echo "  $0 --cli                    # Run CLI tests only"
                 echo "  $0 --db                    # Run DB tests only"
+                echo "  $0 --chaos                 # Run chaos tests only"
                 echo "  $0 --all                   # Run all tests"
                 echo "  PG_PASSWORD=mypass $0 --db # Run DB tests with custom password"
                 exit 0
@@ -81,7 +87,7 @@ if [ $# -gt 0 ]; then
 fi
 
 # If specific tests selected, don't run all
-if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ]; then
+if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ]; then
     RUN_ALL=false
 fi
 
@@ -94,16 +100,18 @@ if [ "$RUN_ALL" = true ]; then
     echo "  ✓ CLI Validation Tests"
     echo "  ✓ Database Integration Tests"
     echo "  ✓ Logging and Dry-Run Tests"
+    echo "  ✓ Chaos Tests"
 else
     [ "$RUN_CLI" = true ] && echo "  ✓ CLI Validation Tests"
     [ "$RUN_DB" = true ] && echo "  ✓ Database Integration Tests"
     [ "$RUN_LOGGING" = true ] && echo "  ✓ Logging and Dry-Run Tests"
+    [ "$RUN_CHAOS" = true ] && echo "  ✓ Chaos Tests"
 fi
 echo ""
 
 # Check if DB tests are needed
 NEED_DB=false
-if [ "$RUN_ALL" = true ] || [ "$RUN_DB" = true ]; then
+if [ "$RUN_ALL" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_CHAOS" = true ]; then
     NEED_DB=true
 fi
 
@@ -188,6 +196,25 @@ if [ "$RUN_ALL" = true ] || [ "$RUN_LOGGING" = true ]; then
         echo -e "${RED}✗ Logging and Dry-Run Tests failed${NC}"
         OVERALL_SUCCESS=false
         FAILED_SUITES+=("Logging and Dry-Run")
+    fi
+    echo ""
+fi
+
+# Run Chaos Tests
+if [ "$RUN_ALL" = true ] || [ "$RUN_CHAOS" = true ]; then
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Running Chaos Tests...${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    
+    if cargo test --test chaos_tests -- --ignored --nocapture; then
+        echo ""
+        echo -e "${GREEN}✓ Chaos Tests passed!${NC}"
+    else
+        echo ""
+        echo -e "${RED}✗ Chaos Tests failed${NC}"
+        OVERALL_SUCCESS=false
+        FAILED_SUITES+=("Chaos Tests")
     fi
     echo ""
 fi
