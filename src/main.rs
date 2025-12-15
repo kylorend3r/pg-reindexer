@@ -1,8 +1,8 @@
 use crate::connection::set_session_parameters;
 use crate::index_operations::get_indexes_in_schema;
 use crate::config::{
-    DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT, DEFAULT_POSTGRES_DATABASE,
-    DEFAULT_POSTGRES_USERNAME, MAX_THREAD_COUNT, DEFAULT_POSTGRES_MAINTENANCE_WORKERS,
+    effective_maintenance_workers, DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT, DEFAULT_POSTGRES_DATABASE,
+    DEFAULT_POSTGRES_USERNAME, MAX_THREAD_COUNT,
     MAX_MAINTENANCE_WORK_MEM_GB, MAX_BLOAT_THRESHOLD_PERCENTAGE, MIN_BLOAT_THRESHOLD_PERCENTAGE,
 };
 use anyhow::{Context, Result};
@@ -583,11 +583,7 @@ async fn main() -> Result<()> {
 
         // Calculate total workers that would be used
         // When max_parallel_maintenance_workers is 0, PostgreSQL uses default (typically 2)
-        let effective_maintenance_workers = if args.max_parallel_maintenance_workers == 0 {
-            DEFAULT_POSTGRES_MAINTENANCE_WORKERS // Default PostgreSQL behavior
-        } else {
-            args.max_parallel_maintenance_workers
-        };
+        let effective_maintenance_workers = effective_maintenance_workers(args.max_parallel_maintenance_workers);
 
         let total_workers = args.threads as u64 * effective_maintenance_workers;
 

@@ -1,4 +1,6 @@
-use std::{fs, io::Write};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy)]
 pub enum LogLevel {
@@ -8,9 +10,13 @@ pub enum LogLevel {
     Success,
 }
 
+// Buffer size for BufWriter (8KB default)
+const LOG_BUFFER_SIZE: usize = 8192;
+
 pub struct Logger {
     log_file: String,
     silence_mode: bool,
+    file_handle: Arc<Mutex<Option<BufWriter<File>>>>,
 }
 
 impl Logger {
@@ -23,6 +29,45 @@ impl Logger {
         Self {
             log_file,
             silence_mode,
+            file_handle: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Ensure the file handle is initialized, creating it if necessary.
+    /// Returns true if the file handle is available, false otherwise.
+    fn ensure_file_handle(&self) -> bool {
+        let mut guard = match self.file_handle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // Handle lock poisoning - use the poisoned lock
+                eprintln!("Logger lock was poisoned, attempting recovery");
+                poisoned.into_inner()
+            }
+        };
+
+        // If file handle already exists, we're good
+        if guard.is_some() {
+            return true;
+        }
+
+        // Try to open/create the log file
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_file)
+        {
+            Ok(file) => {
+                let writer = BufWriter::with_capacity(LOG_BUFFER_SIZE, file);
+                *guard = Some(writer);
+                true
+            }
+            Err(e) => {
+                eprintln!(
+                    "Failed to open log file '{}': {}. Logging to file will be disabled.",
+                    self.log_file, e
+                );
+                false
+            }
         }
     }
 
@@ -33,6 +78,7 @@ impl Logger {
     }
 
     pub fn log(&self, level: LogLevel, message: &str) {
+        // Format message before acquiring lock to minimize lock hold time
         let timestamp = self.get_timestamp();
         let level_str = match level {
             LogLevel::Info => "INFO",
@@ -41,25 +87,43 @@ impl Logger {
             LogLevel::Success => "SUCCESS",
         };
 
-        let formatted_message = format!("[{}] [{}] {}", timestamp, level_str, message);
+        let formatted_message = format!("[{}] [{}] {}\n", timestamp, level_str, message);
 
         // Print to stdout only if not in silence mode
         if !self.silence_mode {
-            println!("{}", formatted_message);
+            print!("{}", formatted_message);
         }
 
-        // Always write to log file
-        if let Ok(mut file) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_file)
-        {
-            let _ = writeln!(file, "{}", formatted_message);
+        // Write to log file using cached handle
+        if self.ensure_file_handle() {
+            let mut guard = match self.file_handle.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    eprintln!("Logger lock was poisoned during write");
+                    poisoned.into_inner()
+                }
+            };
+
+            if let Some(ref mut writer) = *guard {
+                if let Err(e) = writer.write_all(formatted_message.as_bytes()) {
+                    eprintln!("Failed to write to log file '{}': {}", self.log_file, e);
+                    // Try to recover by resetting the file handle
+                    *guard = None;
+                } else {
+                    // Auto-flush on Error level to ensure critical messages are written immediately
+                    if matches!(level, LogLevel::Error) {
+                        if let Err(e) = writer.flush() {
+                            eprintln!("Failed to flush log file '{}': {}", self.log_file, e);
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Log to both terminal and file (always prints, even in silence mode)
     pub fn log_always(&self, level: LogLevel, message: &str) {
+        // Format message before acquiring lock to minimize lock hold time
         let timestamp = self.get_timestamp();
         let level_str = match level {
             LogLevel::Info => "INFO",
@@ -68,18 +132,35 @@ impl Logger {
             LogLevel::Success => "SUCCESS",
         };
 
-        let formatted_message = format!("[{}] [{}] {}", timestamp, level_str, message);
+        let formatted_message = format!("[{}] [{}] {}\n", timestamp, level_str, message);
 
         // Always print to stdout
-        println!("{}", formatted_message);
+        print!("{}", formatted_message);
 
-        // Always write to log file
-        if let Ok(mut file) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_file)
-        {
-            let _ = writeln!(file, "{}", formatted_message);
+        // Write to log file using cached handle
+        if self.ensure_file_handle() {
+            let mut guard = match self.file_handle.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    eprintln!("Logger lock was poisoned during write");
+                    poisoned.into_inner()
+                }
+            };
+
+            if let Some(ref mut writer) = *guard {
+                if let Err(e) = writer.write_all(formatted_message.as_bytes()) {
+                    eprintln!("Failed to write to log file '{}': {}", self.log_file, e);
+                    // Try to recover by resetting the file handle
+                    *guard = None;
+                } else {
+                    // Auto-flush on Error level to ensure critical messages are written immediately
+                    if matches!(level, LogLevel::Error) {
+                        if let Err(e) = writer.flush() {
+                            eprintln!("Failed to flush log file '{}': {}", self.log_file, e);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -219,4 +300,27 @@ impl Logger {
             ),
         );
     }
+
 }
+
+impl Drop for Logger {
+    fn drop(&mut self) {
+        // Flush and close the file handle on drop
+        let mut guard = match self.file_handle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // Even if poisoned, try to flush
+                poisoned.into_inner()
+            }
+        };
+
+        if let Some(mut writer) = guard.take() {
+            // Flush the buffer before dropping
+            if let Err(e) = writer.flush() {
+                eprintln!("Failed to flush log file '{}' during drop: {}", self.log_file, e);
+            }
+            // File closes automatically when writer is dropped
+        }
+    }
+}
+

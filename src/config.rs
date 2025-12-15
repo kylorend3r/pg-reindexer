@@ -44,6 +44,7 @@ pub const DEFAULT_LOCK_TIMEOUT_SECONDS: u64 = 0; // 0 = no timeout
 
 /// Application configuration structure
 /// This struct holds all application-wide settings that can be derived from command-line arguments
+/// Note: Currently only partially used, but kept for potential future refactoring
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -119,14 +120,15 @@ impl AppConfig {
         }
     }
 
-    /// Get the effective number of maintenance workers
-    /// Returns the default PostgreSQL value (2) if max_parallel_maintenance_workers is 0
-    pub fn effective_maintenance_workers(&self) -> u64 {
-        if self.max_parallel_maintenance_workers == 0 {
-            DEFAULT_POSTGRES_MAINTENANCE_WORKERS
-        } else {
-            self.max_parallel_maintenance_workers
-        }
+}
+
+/// Calculate the effective number of maintenance workers
+/// Returns the default PostgreSQL value (2) if max_parallel_maintenance_workers is 0
+pub fn effective_maintenance_workers(max_parallel_maintenance_workers: u64) -> u64 {
+    if max_parallel_maintenance_workers == 0 {
+        DEFAULT_POSTGRES_MAINTENANCE_WORKERS
+    } else {
+        max_parallel_maintenance_workers
     }
 }
 

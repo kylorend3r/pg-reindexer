@@ -2,12 +2,17 @@ use anyhow::{Context, Result};
 use tokio_postgres::Client;
 
 pub async fn create_index_info_table(client: &Client) -> Result<()> {
+    // Check if the schema exists first to avoid potential hangs
+    let schema_already_exists = schema_exists(client, "reindexer").await?;
+    
     // Create the reindexer schema if it doesn't exist
-    let create_schema_query = "CREATE SCHEMA IF NOT EXISTS reindexer";
-    client
-        .execute(create_schema_query, &[])
-        .await
-        .context("Failed to create reindexer schema")?;
+    if !schema_already_exists {
+        let create_schema_query = "CREATE SCHEMA reindexer";
+        client
+            .execute(create_schema_query, &[])
+            .await
+            .context("Failed to create reindexer schema. Please ensure the database user has CREATE privilege on the database.")?;
+    }
 
     // Create the table if it doesn't exist
     let create_table_query = r#"
@@ -33,12 +38,17 @@ pub async fn create_index_info_table(client: &Client) -> Result<()> {
 }
 
 pub async fn create_reindex_state_table(client: &Client) -> Result<()> {
+    // Check if the schema exists first to avoid potential hangs
+    let schema_already_exists = schema_exists(client, "reindexer").await?;
+    
     // Create the reindexer schema if it doesn't exist
-    let create_schema_query = "CREATE SCHEMA IF NOT EXISTS reindexer";
-    client
-        .execute(create_schema_query, &[])
-        .await
-        .context("Failed to create reindexer schema")?;
+    if !schema_already_exists {
+        let create_schema_query = "CREATE SCHEMA reindexer";
+        client
+            .execute(create_schema_query, &[])
+            .await
+            .context("Failed to create reindexer schema. Please ensure the database user has CREATE privilege on the database.")?;
+    }
 
     // Create the state table if it doesn't exist
     let create_table_query = r#"
