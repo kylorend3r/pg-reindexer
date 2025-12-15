@@ -1,4 +1,6 @@
-use std::{fs, io::Write};
+use std::fs::{File, OpenOptions};
+use std::io::{BufWriter, Write};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy)]
 pub enum LogLevel {
@@ -8,9 +10,13 @@ pub enum LogLevel {
     Success,
 }
 
+// Buffer size for BufWriter (8KB default)
+const LOG_BUFFER_SIZE: usize = 8192;
+
 pub struct Logger {
     log_file: String,
     silence_mode: bool,
+    file_handle: Arc<Mutex<Option<BufWriter<File>>>>,
 }
 
 impl Logger {
@@ -23,6 +29,45 @@ impl Logger {
         Self {
             log_file,
             silence_mode,
+            file_handle: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Ensure the file handle is initialized, creating it if necessary.
+    /// Returns true if the file handle is available, false otherwise.
+    fn ensure_file_handle(&self) -> bool {
+        let mut guard = match self.file_handle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // Handle lock poisoning - use the poisoned lock
+                eprintln!("Logger lock was poisoned, attempting recovery");
+                poisoned.into_inner()
+            }
+        };
+
+        // If file handle already exists, we're good
+        if guard.is_some() {
+            return true;
+        }
+
+        // Try to open/create the log file
+        match OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_file)
+        {
+            Ok(file) => {
+                let writer = BufWriter::with_capacity(LOG_BUFFER_SIZE, file);
+                *guard = Some(writer);
+                true
+            }
+            Err(e) => {
+                eprintln!(
+                    "Failed to open log file '{}': {}. Logging to file will be disabled.",
+                    self.log_file, e
+                );
+                false
+            }
         }
     }
 
@@ -33,6 +78,7 @@ impl Logger {
     }
 
     pub fn log(&self, level: LogLevel, message: &str) {
+        // Format message before acquiring lock to minimize lock hold time
         let timestamp = self.get_timestamp();
         let level_str = match level {
             LogLevel::Info => "INFO",
@@ -41,25 +87,43 @@ impl Logger {
             LogLevel::Success => "SUCCESS",
         };
 
-        let formatted_message = format!("[{}] [{}] {}", timestamp, level_str, message);
+        let formatted_message = format!("[{}] [{}] {}\n", timestamp, level_str, message);
 
         // Print to stdout only if not in silence mode
         if !self.silence_mode {
-            println!("{}", formatted_message);
+            print!("{}", formatted_message);
         }
 
-        // Always write to log file
-        if let Ok(mut file) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_file)
-        {
-            let _ = writeln!(file, "{}", formatted_message);
+        // Write to log file using cached handle
+        if self.ensure_file_handle() {
+            let mut guard = match self.file_handle.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    eprintln!("Logger lock was poisoned during write");
+                    poisoned.into_inner()
+                }
+            };
+
+            if let Some(ref mut writer) = *guard {
+                if let Err(e) = writer.write_all(formatted_message.as_bytes()) {
+                    eprintln!("Failed to write to log file '{}': {}", self.log_file, e);
+                    // Try to recover by resetting the file handle
+                    *guard = None;
+                } else {
+                    // Auto-flush on Error level to ensure critical messages are written immediately
+                    if matches!(level, LogLevel::Error) {
+                        if let Err(e) = writer.flush() {
+                            eprintln!("Failed to flush log file '{}': {}", self.log_file, e);
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Log to both terminal and file (always prints, even in silence mode)
     pub fn log_always(&self, level: LogLevel, message: &str) {
+        // Format message before acquiring lock to minimize lock hold time
         let timestamp = self.get_timestamp();
         let level_str = match level {
             LogLevel::Info => "INFO",
@@ -68,18 +132,35 @@ impl Logger {
             LogLevel::Success => "SUCCESS",
         };
 
-        let formatted_message = format!("[{}] [{}] {}", timestamp, level_str, message);
+        let formatted_message = format!("[{}] [{}] {}\n", timestamp, level_str, message);
 
         // Always print to stdout
-        println!("{}", formatted_message);
+        print!("{}", formatted_message);
 
-        // Always write to log file
-        if let Ok(mut file) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_file)
-        {
-            let _ = writeln!(file, "{}", formatted_message);
+        // Write to log file using cached handle
+        if self.ensure_file_handle() {
+            let mut guard = match self.file_handle.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => {
+                    eprintln!("Logger lock was poisoned during write");
+                    poisoned.into_inner()
+                }
+            };
+
+            if let Some(ref mut writer) = *guard {
+                if let Err(e) = writer.write_all(formatted_message.as_bytes()) {
+                    eprintln!("Failed to write to log file '{}': {}", self.log_file, e);
+                    // Try to recover by resetting the file handle
+                    *guard = None;
+                } else {
+                    // Auto-flush on Error level to ensure critical messages are written immediately
+                    if matches!(level, LogLevel::Error) {
+                        if let Err(e) = writer.flush() {
+                            eprintln!("Failed to flush log file '{}': {}", self.log_file, e);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -218,5 +299,223 @@ impl Logger {
                 min_size_gb, max_size_gb
             ),
         );
+    }
+
+    /// Explicitly flush the log file buffer.
+    /// This is useful for ensuring critical messages are written immediately.
+    pub fn flush(&self) {
+        let mut guard = match self.file_handle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("Logger lock was poisoned during flush");
+                poisoned.into_inner()
+            }
+        };
+
+        if let Some(ref mut writer) = *guard {
+            if let Err(e) = writer.flush() {
+                eprintln!("Failed to flush log file '{}': {}", self.log_file, e);
+            }
+        }
+    }
+}
+
+impl Drop for Logger {
+    fn drop(&mut self) {
+        // Flush and close the file handle on drop
+        let mut guard = match self.file_handle.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // Even if poisoned, try to flush
+                poisoned.into_inner()
+            }
+        };
+
+        if let Some(mut writer) = guard.take() {
+            // Flush the buffer before dropping
+            if let Err(e) = writer.flush() {
+                eprintln!("Failed to flush log file '{}' during drop: {}", self.log_file, e);
+            }
+            // File closes automatically when writer is dropped
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::thread;
+
+    fn get_test_log_file() -> String {
+        format!("test_log_{}.log", std::process::id())
+    }
+
+    fn cleanup_test_file(file: &str) {
+        let _ = fs::remove_file(file);
+    }
+
+    #[test]
+    fn test_file_handle_caching() {
+        let log_file = get_test_log_file();
+        cleanup_test_file(&log_file);
+
+        let logger = Logger::new(log_file.clone());
+        
+        // First log should create the file handle
+        logger.log(LogLevel::Info, "Test message 1");
+        
+        // Verify file was created and contains the message
+        assert!(Path::new(&log_file).exists());
+        let content = fs::read_to_string(&log_file).unwrap();
+        assert!(content.contains("Test message 1"));
+        
+        // Second log should reuse the same file handle
+        logger.log(LogLevel::Info, "Test message 2");
+        let content = fs::read_to_string(&log_file).unwrap();
+        assert!(content.contains("Test message 1"));
+        assert!(content.contains("Test message 2"));
+        
+        cleanup_test_file(&log_file);
+    }
+
+    #[test]
+    fn test_thread_safety() {
+        let log_file = get_test_log_file();
+        cleanup_test_file(&log_file);
+
+        let logger = Arc::new(Logger::new(log_file.clone()));
+        let mut handles = vec![];
+
+        // Spawn multiple threads that log concurrently
+        for i in 0..10 {
+            let logger_clone = Arc::clone(&logger);
+            let handle = thread::spawn(move || {
+                for j in 0..10 {
+                    logger_clone.log(
+                        LogLevel::Info,
+                        &format!("Thread {} message {}", i, j),
+                    );
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify all messages were written
+        let content = fs::read_to_string(&log_file).unwrap();
+        for i in 0..10 {
+            for j in 0..10 {
+                assert!(
+                    content.contains(&format!("Thread {} message {}", i, j)),
+                    "Missing message from thread {} iteration {}",
+                    i, j
+                );
+            }
+        }
+
+        cleanup_test_file(&log_file);
+    }
+
+    #[test]
+    fn test_flush_method() {
+        let log_file = get_test_log_file();
+        cleanup_test_file(&log_file);
+
+        let logger = Logger::new(log_file.clone());
+        
+        logger.log(LogLevel::Info, "Before flush");
+        logger.flush(); // Explicit flush
+        
+        // Verify message is in file after flush
+        let content = fs::read_to_string(&log_file).unwrap();
+        assert!(content.contains("Before flush"));
+        
+        cleanup_test_file(&log_file);
+    }
+
+    #[test]
+    fn test_auto_flush_on_error() {
+        let log_file = get_test_log_file();
+        cleanup_test_file(&log_file);
+
+        let logger = Logger::new(log_file.clone());
+        
+        logger.log(LogLevel::Error, "Critical error message");
+        
+        // Error level should auto-flush, so message should be immediately available
+        let content = fs::read_to_string(&log_file).unwrap();
+        assert!(content.contains("Critical error message"));
+        
+        cleanup_test_file(&log_file);
+    }
+
+    #[test]
+    fn test_silence_mode() {
+        let log_file = get_test_log_file();
+        cleanup_test_file(&log_file);
+
+        let logger = Logger::new_with_silence(log_file.clone(), true);
+        
+        // In silence mode, should not print to stdout but still write to file
+        logger.log(LogLevel::Info, "Silent message");
+        
+        // Verify message is in file
+        let content = fs::read_to_string(&log_file).unwrap();
+        assert!(content.contains("Silent message"));
+        
+        cleanup_test_file(&log_file);
+    }
+
+    #[test]
+    fn test_log_always() {
+        let log_file = get_test_log_file();
+        cleanup_test_file(&log_file);
+
+        let logger = Logger::new_with_silence(log_file.clone(), true);
+        
+        // log_always should print even in silence mode
+        logger.log_always(LogLevel::Info, "Always visible message");
+        
+        // Verify message is in file
+        let content = fs::read_to_string(&log_file).unwrap();
+        assert!(content.contains("Always visible message"));
+        
+        cleanup_test_file(&log_file);
+    }
+
+    #[test]
+    fn test_drop_flushes_file() {
+        let log_file = get_test_log_file();
+        cleanup_test_file(&log_file);
+
+        {
+            let logger = Logger::new(log_file.clone());
+            logger.log(LogLevel::Info, "Message before drop");
+            // Logger is dropped here, should flush
+        }
+
+        // After drop, file should be flushed and closed
+        let content = fs::read_to_string(&log_file).unwrap();
+        assert!(content.contains("Message before drop"));
+        
+        cleanup_test_file(&log_file);
+    }
+
+    #[test]
+    fn test_error_handling_invalid_path() {
+        // Try to create logger with invalid path (directory that doesn't exist)
+        let invalid_path = "/nonexistent/directory/test.log";
+        let logger = Logger::new(invalid_path.to_string());
+        
+        // Should not panic, but should log error to stderr
+        logger.log(LogLevel::Info, "This should fail gracefully");
+        // The ensure_file_handle should return false and log to stderr
     }
 }
