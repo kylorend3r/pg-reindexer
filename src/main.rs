@@ -1,9 +1,8 @@
 use crate::connection::{create_connection_ssl, set_session_parameters};
 use crate::index_operations::get_indexes_in_schema;
 use crate::config::{
-    effective_maintenance_workers, DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT, DEFAULT_POSTGRES_DATABASE,
-    DEFAULT_POSTGRES_USERNAME, MAX_THREAD_COUNT,
-    MAX_MAINTENANCE_WORK_MEM_GB, MAX_BLOAT_THRESHOLD_PERCENTAGE, MIN_BLOAT_THRESHOLD_PERCENTAGE,
+    DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT, DEFAULT_POSTGRES_DATABASE,
+    DEFAULT_POSTGRES_USERNAME,
 };
 use crate::types::IndexFilterType;
 use anyhow::{Context, Result};
@@ -21,6 +20,7 @@ mod save;
 mod schema;
 mod state;
 mod types;
+mod validation;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
@@ -328,40 +328,19 @@ fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Validate bloat threshold if provided
-    if let Some(threshold) = args.reindex_only_bloated
-        && threshold > MAX_BLOAT_THRESHOLD_PERCENTAGE
-    {
-        return Err(anyhow::anyhow!(
-            "Bloat threshold ({}) must be between {} and {}",
-            threshold,
-            MIN_BLOAT_THRESHOLD_PERCENTAGE,
-            MAX_BLOAT_THRESHOLD_PERCENTAGE
-        ));
-    }
-
-    // Validate maintenance work mem limit
-    if args.maintenance_work_mem_gb > MAX_MAINTENANCE_WORK_MEM_GB {
-        return Err(anyhow::anyhow!(
-            "Maintenance work mem ({}) exceeds maximum limit of {} GB. Please reduce the value.",
-            args.maintenance_work_mem_gb,
-            MAX_MAINTENANCE_WORK_MEM_GB
-        ));
-    }
-
-    // Validate index size limits
-    if args.min_size_gb > args.max_size_gb {
-        return Err(anyhow::anyhow!(
-            "Minimum index size ({} GB) cannot be greater than maximum index size ({} GB). Please adjust the values.",
-            args.min_size_gb,
-            args.max_size_gb
-        ));
-    }
+    // Validate arguments
+    validation::validate_arguments(
+        args.reindex_only_bloated,
+        args.maintenance_work_mem_gb,
+        args.min_size_gb,
+        args.max_size_gb,
+    )?;
 
     // Index type validation is now handled by the enum's FromStr implementation
 
     // Initialize logger with silence mode if enabled
     let logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
+    let logger_arc = Arc::new(logger);
     
     // Print startup message (always visible, even in silence mode)
     if args.silence_mode {
@@ -413,12 +392,12 @@ async fn main() -> Result<()> {
     }
 
     if args.ssl {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!("Connecting to PostgreSQL at {}:{} with SSL", host, port),
         );
     } else {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!("Connecting to PostgreSQL at {}:{}", host, port),
         );
@@ -432,74 +411,23 @@ async fn main() -> Result<()> {
         args.ssl_ca_cert.clone(),
         args.ssl_client_cert.clone(),
         args.ssl_client_key.clone(),
-        &logger,
+        &logger_arc,
     )
     .await?;
 
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Success,
         "Successfully connected to PostgreSQL",
     );
 
     // Validate thread count and parallel worker settings
-    logger.log(
-        logging::LogLevel::Info,
-        "Validating thread count and parallel worker settings...",
-    );
-
-    // Check maximum thread limit
-    if args.threads > MAX_THREAD_COUNT {
-        return Err(anyhow::anyhow!(
-            "Thread count ({}) exceeds maximum limit of {}. Please reduce the number of threads.",
-            args.threads,
-            MAX_THREAD_COUNT
-        ));
-    }
-
-    // Get current max_parallel_workers setting
-    let rows = client
-        .query(queries::GET_MAX_PARALLEL_WORKERS, &[])
-        .await
-        .context("Failed to get max_parallel_workers setting")?;
-
-    if let Some(row) = rows.first() {
-        let max_parallel_workers_str: String = row.get(0);
-        let max_parallel_workers: u64 = max_parallel_workers_str
-            .parse()
-            .context("Failed to parse max_parallel_workers value")?;
-
-        // Calculate total workers that would be used
-        // When max_parallel_maintenance_workers is 0, PostgreSQL uses default (typically 2)
-        let effective_maintenance_workers = effective_maintenance_workers(args.max_parallel_maintenance_workers);
-
-        let total_workers = args.threads as u64 * effective_maintenance_workers;
-
-        if total_workers > max_parallel_workers {
-            return Err(anyhow::anyhow!(
-                "Configuration would exceed PostgreSQL's max_parallel_workers limit. \
-                Threads ({}) × effective_maintenance_workers ({}) = {} workers, \
-                but max_parallel_workers is {}. \
-                Note: When max_parallel_maintenance_workers is 0, PostgreSQL uses default of 2 workers. \
-                Please reduce either --threads or --max-parallel-maintenance-workers.",
-                args.threads,
-                effective_maintenance_workers,
-                total_workers,
-                max_parallel_workers
-            ));
-        }
-
-        logger.log(
-            logging::LogLevel::Success,
-            &format!(
-                "Validation passed: {} threads × {} workers = {} total workers (max: {})",
-                args.threads, effective_maintenance_workers, total_workers, max_parallel_workers
-            ),
-        );
-    } else {
-        return Err(anyhow::anyhow!(
-            "Failed to get max_parallel_workers setting"
-        ));
-    }
+    validation::validate_threads_and_workers(
+        &client,
+        &logger_arc,
+        args.threads,
+        args.max_parallel_maintenance_workers,
+    )
+    .await?;
 
     // Get the current temp_file_limit setting and check if it's limited or not.
     // Warn the user if it's limited.
@@ -512,9 +440,9 @@ async fn main() -> Result<()> {
         .parse()
         .context("Failed to parse temp_file_limit value")?;
     if temp_file_limit != -1 {
-        logger.log(logging::LogLevel::Warning, "Temp file limit is limited at database level. This may cause reindexing to fail at some point.Ensure you have set a proper temp_file_limit in your postgresql.conf file.");
+        logger_arc.log(logging::LogLevel::Warning, "Temp file limit is limited at database level. This may cause reindexing to fail at some point.Ensure you have set a proper temp_file_limit in your postgresql.conf file.");
     } else {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Success,
             "Temp file limit is not limited at database level.",
         );
@@ -522,82 +450,28 @@ async fn main() -> Result<()> {
 
     // Clean orphaned _ccnew indexes if requested
     if args.clean_orphaned_indexes {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             "Will clean orphaned _ccnew indexes during index discovery...",
         );
     }
 
-    // Validate that the schema exists before proceeding
-    logger.log(
-        logging::LogLevel::Info,
-        &format!("Validating schema '{}' exists", args.schema),
-    );
+    // Validate schema and table existence
+    validation::validate_schema_and_table(
+        &client,
+        &logger_arc,
+        &args.schema,
+        args.table.as_deref(),
+    )
+    .await?;
 
-    match schema::schema_exists(&client, &args.schema).await {
-        Ok(exists) => {
-            if !exists {
-                return Err(anyhow::anyhow!(
-                    "Schema '{}' does not exist in the database. Please verify the schema name and try again.",
-                    args.schema
-                ));
-            }
-            logger.log(
-                logging::LogLevel::Success,
-                &format!("Schema '{}' validation passed", args.schema),
-            );
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!(
-                "Failed to validate schema '{}': {}",
-                args.schema,
-                e
-            ));
-        }
-    }
-
-    // Validate that the table exists if table name is provided
-    if let Some(table) = &args.table {
-        logger.log(
-            logging::LogLevel::Info,
-            &format!(
-                "Validating table '{}' exists in schema '{}'",
-                table, args.schema
-            ),
-        );
-
-        match schema::table_exists(&client, &args.schema, table).await {
-            Ok(exists) => {
-                if !exists {
-                    return Err(anyhow::anyhow!(
-                        "Table '{}' does not exist in schema '{}'. Please verify the table name and try again.",
-                        table,
-                        args.schema
-                    ));
-                }
-                logger.log(
-                    logging::LogLevel::Success,
-                    &format!("Table '{}' validation passed", table),
-                );
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to validate table '{}' in schema '{}': {}",
-                    table,
-                    args.schema,
-                    e
-                ));
-            }
-        }
-    }
-
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Info,
         &format!("Discovering indexes in schema '{}'", args.schema),
     );
 
     if let Some(table) = &args.table {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!(
                 "Filtering for table '{}' (min size: {} GB, max size: {} GB, index type: {})",
@@ -605,7 +479,7 @@ async fn main() -> Result<()> {
             ),
         );
     } else {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!(
                 "Index size range: {} GB - {} GB, index type: {}",
@@ -615,7 +489,7 @@ async fn main() -> Result<()> {
     }
 
     // Log the index size limits for clarity
-    logger.log_index_size_limits(args.min_size_gb, args.max_size_gb);
+    logger_arc.log_index_size_limits(args.min_size_gb, args.max_size_gb);
 
     // Generate session ID and handle resume logic
     let session_id = if args.resume {
@@ -623,7 +497,7 @@ async fn main() -> Result<()> {
         match state::has_pending_indexes(&client, None).await {
             Ok(has_pending) => {
                 if has_pending {
-                    logger.log(
+                    logger_arc.log(
                         logging::LogLevel::Info,
                         "Resume mode: Found pending indexes in state table. Discovering all indexes and merging with state.",
                     );
@@ -631,7 +505,7 @@ async fn main() -> Result<()> {
                     let session_id = state::generate_session_id();
                     Some(session_id)
                 } else {
-                    logger.log(
+                    logger_arc.log(
                         logging::LogLevel::Info,
                         "Resume mode: No pending indexes found. Starting fresh session.",
                     );
@@ -652,7 +526,7 @@ async fn main() -> Result<()> {
                 }
             }
             Err(e) => {
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Warning,
                     &format!("Failed to check for pending indexes: {}. Starting fresh session.", e),
                 );
@@ -674,18 +548,18 @@ async fn main() -> Result<()> {
         }
     } else {
         // Normal mode - start from zero by clearing existing state for this schema
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!("Starting fresh: clearing any existing state for schema '{}'", args.schema),
         );
         
         if let Err(e) = state::clear_schema_state(&client, &args.schema).await {
-            logger.log(
+            logger_arc.log(
                 logging::LogLevel::Warning,
                 &format!("Failed to clear existing state for schema '{}': {}", args.schema, e),
             );
         } else {
-            logger.log(
+            logger_arc.log(
                 logging::LogLevel::Success,
                 &format!("Cleared existing state for schema '{}'", args.schema),
             );
@@ -697,7 +571,7 @@ async fn main() -> Result<()> {
     // Get indexes - when resuming, load from state table; otherwise discover from database
     let indexes = if args.resume {
         // Resume mode: Load pending indexes from state table
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             "Resume mode: Loading pending indexes from state table...",
         );
@@ -728,7 +602,7 @@ async fn main() -> Result<()> {
     };
 
     if !excluded_indexes.is_empty() {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!(
                 "Excluding {} indexes from reindexing: {}",
@@ -742,7 +616,7 @@ async fn main() -> Result<()> {
         if args.resume {
             // Resume mode: No pending indexes found
             if let Some(table) = &args.table {
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Warning,
                     &format!(
                         "Resume mode: No pending indexes found in state table for schema '{}' and table '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
@@ -750,7 +624,7 @@ async fn main() -> Result<()> {
                     ),
                 );
             } else {
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Warning,
                     &format!(
                         "Resume mode: No pending indexes found in state table for schema '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
@@ -761,7 +635,7 @@ async fn main() -> Result<()> {
         } else {
             // Normal mode: No indexes found
             if let Some(table) = &args.table {
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Warning,
                     &format!(
                         "No indexes found in schema '{}' for table '{}'",
@@ -769,7 +643,7 @@ async fn main() -> Result<()> {
                     ),
                 );
             } else {
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Warning,
                     &format!("No indexes found in schema '{}'", args.schema),
                 );
@@ -779,7 +653,7 @@ async fn main() -> Result<()> {
     }
 
     if let Some(table) = &args.table {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!(
                 "Found {} indexes in schema '{}' for table '{}'",
@@ -789,7 +663,7 @@ async fn main() -> Result<()> {
             ),
         );
     } else {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!(
                 "Found {} indexes in schema '{}'",
@@ -800,17 +674,17 @@ async fn main() -> Result<()> {
     }
 
     if args.dry_run {
-        logger.log_dry_run(&indexes);
+        logger_arc.log_dry_run(&indexes);
         return Ok(());
     }
 
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Info,
         &format!("Found {} indexes to process", indexes.len()),
     );
 
     if let Some(threshold) = args.reindex_only_bloated {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             &format!(
                 "Bloat threshold enabled: only reindexing indexes with bloat ratio >= {}%",
@@ -819,7 +693,7 @@ async fn main() -> Result<()> {
         );
     }
 
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Info,
         "Setting up session parameters and schema",
     );
@@ -833,23 +707,23 @@ async fn main() -> Result<()> {
         args.lock_timeout_seconds,
     )
     .await?;
-    logger.log_session_parameters(
+    logger_arc.log_session_parameters(
         args.maintenance_work_mem_gb,
         args.max_parallel_maintenance_workers,
         args.maintenance_io_concurrency,
         args.lock_timeout_seconds,
     );
 
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Info,
         "Checking if the schema exists to store the reindex information.",
     );
     match schema::create_index_info_table(&client).await {
         Ok(_) => {
-            logger.log(logging::LogLevel::Success, "Schema check passed.");
+            logger_arc.log(logging::LogLevel::Success, "Schema check passed.");
         }
         Err(e) => {
-            logger.log(
+            logger_arc.log(
                 logging::LogLevel::Warning,
                 &format!("Failed to create reindex_logbook table: {}", e),
             );
@@ -857,36 +731,36 @@ async fn main() -> Result<()> {
     }
 
     // Create reindex_state table
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Info,
         "Creating reindex_state table for state tracking.",
     );
     match schema::create_reindex_state_table(&client).await {
         Ok(_) => {
-            logger.log(logging::LogLevel::Success, "Reindex state table created/verified.");
+            logger_arc.log(logging::LogLevel::Success, "Reindex state table created/verified.");
         }
         Err(e) => {
-            logger.log(
+            logger_arc.log(
                 logging::LogLevel::Warning,
                 &format!("Failed to create reindex_state table: {}", e),
             );
         }
     }
 
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Success,
         "Session parameters and schema setup completed",
     );
 
     // Note: Per-thread checks will be performed when each thread starts
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Info,
         "Per-thread checks will be performed when each thread starts",
     );
 
     // Adjust thread count if table name is provided
     let effective_threads = if args.table.is_some() {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             "Table name provided, setting thread count to 1 to avoid conflicts",
         );
@@ -895,7 +769,7 @@ async fn main() -> Result<()> {
         args.threads
     };
 
-    logger.log(
+    logger_arc.log(
         logging::LogLevel::Info,
         &format!(
             "Starting concurrent reindex process with {} threads",
@@ -911,11 +785,10 @@ async fn main() -> Result<()> {
 
     // Create worker tasks
     let mut tasks = Vec::new();
-    let logger = Arc::new(logger);
 
     // Clean orphaned _ccnew indexes if requested
     if args.clean_orphaned_indexes {
-        logger.log(
+        logger_arc.log(
             logging::LogLevel::Info,
             "Cleaning orphaned _ccnew indexes...",
         );
@@ -926,11 +799,11 @@ async fn main() -> Result<()> {
                     &client,
                     &index.schema_name,
                     &index.index_name,
-                    &logger,
+                    &logger_arc,
                 )
                 .await
             {
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Error,
                     &format!(
                         "Failed to drop orphaned index {}.{}: {}",
@@ -944,7 +817,7 @@ async fn main() -> Result<()> {
     // Save excluded indexes to logbook before filtering them out
     for index in &indexes {
         if excluded_indexes.contains(&index.index_name) {
-            logger.log(
+            logger_arc.log(
                 logging::LogLevel::Info,
                 &format!("Excluding index from reindexing: {}", index.index_name),
             );
@@ -962,7 +835,7 @@ async fn main() -> Result<()> {
             };
 
             if let Err(e) = crate::save::save_index_info(&client, &index_data).await {
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Error,
                     &format!(
                         "Failed to save excluded index info for {}.{}: {}",
@@ -984,7 +857,7 @@ async fn main() -> Result<()> {
 
             // Check if index is a temporary concurrent reindex index
             if is_temporary_concurrent_reindex_index(&index.index_name) {
-                logger.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index.index_name));
+                logger_arc.log(logging::LogLevel::Warning, &format!("Index appears to be a temporary concurrent reindex index (matches '_ccnew' pattern). Skipping reindexing: {}", index.index_name));
                 return false;
             }
 
@@ -996,7 +869,7 @@ async fn main() -> Result<()> {
     if !args.resume {
         if let Some(ref sid) = session_id {
             if let Err(e) = state::initialize_state_table(&client, &filtered_indexes, sid).await {
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Warning,
                     &format!("Failed to initialize state table: {}", e),
                 );
@@ -1013,7 +886,7 @@ async fn main() -> Result<()> {
     for worker_id in 0..effective_threads {
         let connection_string = connection_string.clone();
         let memory_table = memory_table.clone();
-        let logger = logger.clone();
+        let logger = logger_arc.clone();
         let maintenance_work_mem_gb = args.maintenance_work_mem_gb;
         let max_parallel_maintenance_workers = args.max_parallel_maintenance_workers;
         let maintenance_io_concurrency = args.maintenance_io_concurrency;
@@ -1067,7 +940,7 @@ async fn main() -> Result<()> {
         match task.await {
             Ok(Ok(_)) => {
                 // Worker completed successfully
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Info,
                     &format!("Worker {} completed successfully", worker_id),
                 );
@@ -1075,7 +948,7 @@ async fn main() -> Result<()> {
             Ok(Err(e)) => {
                 _error_count += 1;
                 eprintln!("  ✗ Worker {} failed: {}", worker_id, e);
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Error,
                     &format!("Worker {} failed: {}", worker_id, e),
                 );
@@ -1083,7 +956,7 @@ async fn main() -> Result<()> {
             Err(e) => {
                 _error_count += 1;
                 eprintln!("  ✗ Worker {} panicked: {}", worker_id, e);
-                logger.log(
+                logger_arc.log(
                     logging::LogLevel::Error,
                     &format!("Worker {} panicked: {}", worker_id, e),
                 );
