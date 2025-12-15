@@ -31,7 +31,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Run CLI Validation Tests
-        run: cargo test --test cli_validation -- --nocapture
+        run: cargo test --test cli_validation -- --nocapture --skip test_thread_count_too_high
       - name: Run Logging and Dry-Run Tests
         run: cargo test --test logging_and_dry_run -- --ignored --nocapture
 

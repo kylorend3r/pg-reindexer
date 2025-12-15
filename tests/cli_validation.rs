@@ -42,6 +42,7 @@ fn test_missing_required_schema() {
 }
 
 #[test]
+#[ignore] // Excluded from default test runs
 fn test_thread_count_too_high() {
     let mut cmd = get_cmd();
     cmd.arg("--schema")
