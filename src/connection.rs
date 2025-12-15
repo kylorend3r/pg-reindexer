@@ -34,31 +34,36 @@ pub async fn set_session_parameters(
         .await
         .context("Set log_statement to 'all'.")?;
 
-    // Set lock_timeout (convert from seconds to milliseconds)
+    // Set lock_timeout using parameterized query
+    // PostgreSQL SET command accepts parameters when passed as text and cast to interval
+    // This is safer than string formatting as the parameter is properly escaped by the driver
     let lock_timeout_ms = lock_timeout_seconds * MILLISECONDS_PER_SECOND;
+    let lock_timeout_interval = format!("{}ms", lock_timeout_ms);
+    // Use parameterized query: SET accepts text parameters that are cast to the appropriate type
     client
         .execute(
-            &format!("SET lock_timeout TO '{}ms';", lock_timeout_ms),
-            &[],
+            "SET lock_timeout TO $1::interval",
+            &[&lock_timeout_interval],
         )
         .await
         .context("Set the lock_timeout.")?;
 
-    // Set deadlock_timeout
+    // Set deadlock_timeout using parameterized query
     client
-        .execute(&format!("SET deadlock_timeout TO '{}';", DEFAULT_DEADLOCK_TIMEOUT), &[])
+        .execute(
+            "SET deadlock_timeout TO $1",
+            &[&DEFAULT_DEADLOCK_TIMEOUT],
+        )
         .await
         .context("Set the deadlock_timeout.")?;
 
-    // The following operation defines the maintenance work mem in GB provided by the user.
+    // Set maintenance_work_mem using parameterized query
+    // Format the value as "XGB" and pass as parameter
+    let maintenance_work_mem_value = format!("{}GB", maintenance_work_mem_gb);
     client
         .execute(
-            format!(
-                "SET maintenance_work_mem TO '{}GB';",
-                maintenance_work_mem_gb
-            )
-            .as_str(),
-            &[],
+            "SET maintenance_work_mem TO $1",
+            &[&maintenance_work_mem_value],
         )
         .await
         .context("Set the maintenance work mem.")?;
@@ -93,15 +98,12 @@ pub async fn set_session_parameters(
             ));
         }
 
-        // Set max_parallel_maintenance_workers
+        // Set max_parallel_maintenance_workers using parameterized query
+        let max_parallel_maintenance_workers_str = max_parallel_maintenance_workers.to_string();
         client
             .execute(
-                format!(
-                    "SET max_parallel_maintenance_workers TO '{}';",
-                    max_parallel_maintenance_workers
-                )
-                .as_str(),
-                &[],
+                "SET max_parallel_maintenance_workers TO $1",
+                &[&max_parallel_maintenance_workers_str],
             )
             .await
             .context("Set the max_parallel_maintenance_workers.")?;
@@ -120,15 +122,12 @@ pub async fn set_session_parameters(
         ));
     }
 
-    // Set maintenance_io_concurrency
+    // Set maintenance_io_concurrency using parameterized query
+    let maintenance_io_concurrency_str = maintenance_io_concurrency.to_string();
     client
         .execute(
-            format!(
-                "SET maintenance_io_concurrency TO '{}';",
-                maintenance_io_concurrency
-            )
-            .as_str(),
-            &[],
+            "SET maintenance_io_concurrency TO $1",
+            &[&maintenance_io_concurrency_str],
         )
         .await
         .context("Set the maintenance_io_concurrency.")?;
