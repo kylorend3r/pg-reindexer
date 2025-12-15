@@ -1,12 +1,111 @@
 use crate::config::{
     MILLISECONDS_PER_SECOND, DEFAULT_DEADLOCK_TIMEOUT, MAX_MAINTENANCE_IO_CONCURRENCY,
-    PARALLEL_WORKERS_SAFETY_DIVISOR,
+    PARALLEL_WORKERS_SAFETY_DIVISOR, DEFAULT_POSTGRES_HOST, DEFAULT_POSTGRES_PORT,
+    DEFAULT_POSTGRES_DATABASE, DEFAULT_POSTGRES_USERNAME,
 };
+use crate::credentials::get_password_from_pgpass;
 use anyhow::{Context, Result};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
-use std::fs;
+use std::{env, fs};
 use tokio_postgres::{Config, NoTls, config::SslMode};
+
+/// Connection configuration structure
+/// 
+/// Holds all connection parameters needed to connect to PostgreSQL
+#[derive(Debug, Clone)]
+pub struct ConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: String,
+    pub password: Option<String>,
+    pub ssl: bool,
+    pub ssl_self_signed: bool,
+    pub ssl_ca_cert: Option<String>,
+    pub ssl_client_cert: Option<String>,
+    pub ssl_client_key: Option<String>,
+}
+
+impl ConnectionConfig {
+    /// Build connection configuration from command-line arguments
+    /// 
+    /// Resolves connection parameters in the following order:
+    /// 1. Command-line arguments
+    /// 2. Environment variables (PG_HOST, PG_PORT, PG_DATABASE, PG_USER, PG_PASSWORD)
+    /// 3. Default values
+    /// 
+    /// For password, also checks .pgpass file if not provided via args or env.
+    pub fn from_args(
+        host: Option<String>,
+        port: Option<u16>,
+        database: Option<String>,
+        username: Option<String>,
+        password: Option<String>,
+        ssl: bool,
+        ssl_self_signed: bool,
+        ssl_ca_cert: Option<String>,
+        ssl_client_cert: Option<String>,
+        ssl_client_key: Option<String>,
+    ) -> Result<Self> {
+        let host = host
+            .or_else(|| env::var("PG_HOST").ok())
+            .unwrap_or_else(|| DEFAULT_POSTGRES_HOST.to_string());
+
+        let port = port
+            .or_else(|| env::var("PG_PORT").ok().and_then(|p| p.parse().ok()))
+            .unwrap_or(DEFAULT_POSTGRES_PORT);
+
+        let database = database
+            .or_else(|| env::var("PG_DATABASE").ok())
+            .unwrap_or_else(|| DEFAULT_POSTGRES_DATABASE.to_string());
+
+        let username = username
+            .or_else(|| env::var("PG_USER").ok())
+            .unwrap_or_else(|| DEFAULT_POSTGRES_USERNAME.to_string());
+
+        let password = password
+            .or_else(|| {
+                let env_password = env::var("PG_PASSWORD").ok();
+                // If PG_PASSWORD is set but empty, treat it as None to allow pgpass fallback
+                if env_password.as_ref().is_some_and(|p| p.is_empty()) {
+                    None
+                } else {
+                    env_password
+                }
+            })
+            .or_else(|| {
+                get_password_from_pgpass(&host, port, &database, &username).unwrap_or(None)
+            });
+
+        Ok(Self {
+            host,
+            port,
+            database,
+            username,
+            password,
+            ssl,
+            ssl_self_signed,
+            ssl_ca_cert,
+            ssl_client_cert,
+            ssl_client_key,
+        })
+    }
+
+    /// Build PostgreSQL connection string from configuration
+    pub fn build_connection_string(&self) -> String {
+        let mut connection_string = format!(
+            "host={} port={} dbname={} user={}",
+            self.host, self.port, self.database, self.username
+        );
+
+        if let Some(ref pwd) = self.password {
+            connection_string.push_str(&format!(" password={}", pwd));
+        }
+
+        connection_string
+    }
+}
 
 pub async fn set_session_parameters(
     client: &tokio_postgres::Client,
@@ -34,32 +133,35 @@ pub async fn set_session_parameters(
         .await
         .context("Set log_statement to 'all'.")?;
 
-    // Set lock_timeout (convert from seconds to milliseconds)
-    let lock_timeout_ms = lock_timeout_seconds * MILLISECONDS_PER_SECOND;
+    // Set lock_timeout
+    // PostgreSQL SET command doesn't support parameterized queries with type casting
+    // Since lock_timeout_seconds is a u64, it's safe to format directly
+    let lock_timeout_sql = if lock_timeout_seconds == 0 {
+        "SET lock_timeout TO '0'".to_string()
+    } else {
+        let lock_timeout_ms = lock_timeout_seconds * MILLISECONDS_PER_SECOND;
+        format!("SET lock_timeout TO '{}ms'", lock_timeout_ms)
+    };
     client
-        .execute(
-            &format!("SET lock_timeout TO '{}ms';", lock_timeout_ms),
-            &[],
-        )
+        .execute(&lock_timeout_sql, &[])
         .await
         .context("Set the lock_timeout.")?;
 
     // Set deadlock_timeout
+    // PostgreSQL SET command doesn't support parameterized queries
+    // Since DEFAULT_DEADLOCK_TIMEOUT is a constant string, it's safe to format directly
+    let deadlock_timeout_sql = format!("SET deadlock_timeout TO '{}'", DEFAULT_DEADLOCK_TIMEOUT);
     client
-        .execute(&format!("SET deadlock_timeout TO '{}';", DEFAULT_DEADLOCK_TIMEOUT), &[])
+        .execute(&deadlock_timeout_sql, &[])
         .await
         .context("Set the deadlock_timeout.")?;
 
-    // The following operation defines the maintenance work mem in GB provided by the user.
+    // Set maintenance_work_mem
+    // PostgreSQL SET command doesn't support parameterized queries
+    // Since maintenance_work_mem_gb is a u64, it's safe to format directly
+    let maintenance_work_mem_sql = format!("SET maintenance_work_mem TO '{}GB'", maintenance_work_mem_gb);
     client
-        .execute(
-            format!(
-                "SET maintenance_work_mem TO '{}GB';",
-                maintenance_work_mem_gb
-            )
-            .as_str(),
-            &[],
-        )
+        .execute(&maintenance_work_mem_sql, &[])
         .await
         .context("Set the maintenance work mem.")?;
 
@@ -94,15 +196,14 @@ pub async fn set_session_parameters(
         }
 
         // Set max_parallel_maintenance_workers
+        // PostgreSQL SET command doesn't support parameterized queries
+        // Since max_parallel_maintenance_workers is a u64, it's safe to format directly
+        let max_parallel_maintenance_workers_sql = format!(
+            "SET max_parallel_maintenance_workers TO {}",
+            max_parallel_maintenance_workers
+        );
         client
-            .execute(
-                format!(
-                    "SET max_parallel_maintenance_workers TO '{}';",
-                    max_parallel_maintenance_workers
-                )
-                .as_str(),
-                &[],
-            )
+            .execute(&max_parallel_maintenance_workers_sql, &[])
             .await
             .context("Set the max_parallel_maintenance_workers.")?;
     } else {
@@ -121,28 +222,23 @@ pub async fn set_session_parameters(
     }
 
     // Set maintenance_io_concurrency
+    // PostgreSQL SET command doesn't support parameterized queries
+    // Since maintenance_io_concurrency is a u64, it's safe to format directly
+    let maintenance_io_concurrency_sql = format!(
+        "SET maintenance_io_concurrency TO {}",
+        maintenance_io_concurrency
+    );
     client
-        .execute(
-            format!(
-                "SET maintenance_io_concurrency TO '{}';",
-                maintenance_io_concurrency
-            )
-            .as_str(),
-            &[],
-        )
+        .execute(&maintenance_io_concurrency_sql, &[])
         .await
         .context("Set the maintenance_io_concurrency.")?;
 
     Ok(())
 }
 
-// Create a new database connection with session parameters set and SSL support
-pub async fn create_connection_with_session_parameters_ssl(
+// Create a new database connection with SSL support (without setting session parameters)
+pub async fn create_connection_ssl(
     connection_string: &str,
-    maintenance_work_mem_gb: u64,
-    max_parallel_maintenance_workers: u64,
-    maintenance_io_concurrency: u64,
-    lock_timeout_seconds: u64,
     use_ssl: bool,
     accept_invalid_certs: bool,
     ssl_ca_cert: Option<String>,
@@ -153,7 +249,7 @@ pub async fn create_connection_with_session_parameters_ssl(
     if use_ssl {
         logger.log(
             crate::logging::LogLevel::Info,
-            "Creating connection for worker",
+            "Creating connection to PostgreSQL",
         );
         // Parse connection string into Config
         let mut config: Config = connection_string
@@ -168,6 +264,10 @@ pub async fn create_connection_with_session_parameters_ssl(
 
             // Handle custom CA certificate
             if let Some(ca_cert_path) = &ssl_ca_cert {
+                logger.log(
+                    crate::logging::LogLevel::Info,
+                    &format!("Loading CA certificate from: {}", ca_cert_path),
+                );
                 let ca_cert_data =
                     fs::read(ca_cert_path).context("Failed to read CA certificate file")?;
                 let ca_cert = Certificate::from_pem(&ca_cert_data)
@@ -179,8 +279,17 @@ pub async fn create_connection_with_session_parameters_ssl(
             if let (Some(client_cert_path), Some(client_key_path)) =
                 (&ssl_client_cert, &ssl_client_key)
             {
+                logger.log(
+                    crate::logging::LogLevel::Info,
+                    &format!("Loading client certificate from: {}", client_cert_path),
+                );
                 let client_cert_data =
                     fs::read(client_cert_path).context("Failed to read client certificate file")?;
+
+                logger.log(
+                    crate::logging::LogLevel::Info,
+                    &format!("Loading client key from: {}", client_key_path),
+                );
                 let client_key_data =
                     fs::read(client_key_path).context("Failed to read client key file")?;
 
@@ -198,12 +307,16 @@ pub async fn create_connection_with_session_parameters_ssl(
                 tls_builder.identity(identity);
             } else if ssl_client_cert.is_some() || ssl_client_key.is_some() {
                 return Err(anyhow::anyhow!(
-                    "Both ssl_client_cert and ssl_client_key must be provided together"
+                    "Both --ssl-client-cert and --ssl-client-key must be provided together"
                 ));
             }
 
             // Handle invalid certificate acceptance
             if accept_invalid_certs {
+                logger.log(
+                    crate::logging::LogLevel::Info,
+                    "Connection configured to allow self-signed certificates",
+                );
                 tls_builder.danger_accept_invalid_certs(true);
             }
 
@@ -215,7 +328,7 @@ pub async fn create_connection_with_session_parameters_ssl(
             config
                 .connect(tls)
                 .await
-                .context("Failed to connect to PostgreSQL with SSL")?
+                .context("ERROR: Failed to connect to PostgreSQL with SSL")?
         };
 
         // Spawn the connection to run in the background
@@ -225,26 +338,16 @@ pub async fn create_connection_with_session_parameters_ssl(
             }
         });
 
-        // Set session parameters for this connection
-        set_session_parameters(
-            &client,
-            maintenance_work_mem_gb,
-            max_parallel_maintenance_workers,
-            maintenance_io_concurrency,
-            lock_timeout_seconds,
-        )
-        .await?;
-
         Ok(client)
     } else {
         logger.log(
             crate::logging::LogLevel::Info,
-            "Creating connection for worker",
+            "Creating connection to PostgreSQL",
         );
         // Connect without SSL
         let (client, connection) = tokio_postgres::connect(connection_string, NoTls)
             .await
-            .context("Failed to connect to PostgreSQL")?;
+            .context("ERROR: Failed to connect to PostgreSQL")?;
 
         // Spawn the connection to run in the background
         tokio::spawn(async move {
@@ -253,16 +356,45 @@ pub async fn create_connection_with_session_parameters_ssl(
             }
         });
 
-        // Set session parameters for this connection
-        set_session_parameters(
-            &client,
-            maintenance_work_mem_gb,
-            max_parallel_maintenance_workers,
-            maintenance_io_concurrency,
-            lock_timeout_seconds,
-        )
-        .await?;
-
         Ok(client)
     }
+}
+
+// Create a new database connection with session parameters set and SSL support
+pub async fn create_connection_with_session_parameters_ssl(
+    connection_string: &str,
+    maintenance_work_mem_gb: u64,
+    max_parallel_maintenance_workers: u64,
+    maintenance_io_concurrency: u64,
+    lock_timeout_seconds: u64,
+    use_ssl: bool,
+    accept_invalid_certs: bool,
+    ssl_ca_cert: Option<String>,
+    ssl_client_cert: Option<String>,
+    ssl_client_key: Option<String>,
+    logger: &crate::logging::Logger,
+) -> Result<tokio_postgres::Client> {
+    // Create connection using the shared SSL connection logic
+    let client = create_connection_ssl(
+        connection_string,
+        use_ssl,
+        accept_invalid_certs,
+        ssl_ca_cert,
+        ssl_client_cert,
+        ssl_client_key,
+        logger,
+    )
+    .await?;
+
+    // Set session parameters for this connection
+    set_session_parameters(
+        &client,
+        maintenance_work_mem_gb,
+        max_parallel_maintenance_workers,
+        maintenance_io_concurrency,
+        lock_timeout_seconds,
+    )
+    .await?;
+
+    Ok(client)
 }

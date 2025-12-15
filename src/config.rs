@@ -37,7 +37,7 @@ pub const DEFAULT_MAX_INDEX_SIZE_GB: u64 = 1024;
 pub const DEFAULT_MIN_INDEX_SIZE_GB: u64 = 0;
 
 // Index type defaults
-pub const DEFAULT_INDEX_TYPE: &str = "btree";
+pub const DEFAULT_INDEX_TYPE: crate::types::IndexFilterType = crate::types::IndexFilterType::Btree;
 
 // Lock timeout defaults
 pub const DEFAULT_LOCK_TIMEOUT_SECONDS: u64 = 0; // 0 = no timeout
@@ -67,7 +67,7 @@ pub struct AppConfig {
     // Index filtering settings
     pub min_size_gb: u64,
     pub max_size_gb: u64,
-    pub index_type: String,
+    pub index_type: crate::types::IndexFilterType,
     pub bloat_threshold: Option<u8>,
 
     // SSL settings
@@ -103,7 +103,7 @@ impl AppConfig {
             lock_timeout_seconds: DEFAULT_LOCK_TIMEOUT_SECONDS,
             min_size_gb: DEFAULT_MIN_INDEX_SIZE_GB,
             max_size_gb: DEFAULT_MAX_INDEX_SIZE_GB,
-            index_type: DEFAULT_INDEX_TYPE.to_string(),
+            index_type: DEFAULT_INDEX_TYPE,
             bloat_threshold: None,
             ssl: false,
             ssl_self_signed: false,

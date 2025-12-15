@@ -59,6 +59,43 @@ impl std::fmt::Display for IndexStatus {
     }
 }
 
+/// Index filter type for selecting which indexes to reindex
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexFilterType {
+    /// Filter for b-tree indexes only
+    Btree,
+    /// Filter for constraint indexes (primary keys and unique constraints) only
+    Constraint,
+    /// Include all index types
+    All,
+}
+
+impl std::fmt::Display for IndexFilterType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IndexFilterType::Btree => write!(f, "btree"),
+            IndexFilterType::Constraint => write!(f, "constraint"),
+            IndexFilterType::All => write!(f, "all"),
+        }
+    }
+}
+
+impl std::str::FromStr for IndexFilterType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "btree" => Ok(IndexFilterType::Btree),
+            "constraint" => Ok(IndexFilterType::Constraint),
+            "all" | "" => Ok(IndexFilterType::All),
+            _ => Err(format!(
+                "Invalid index filter type '{}'. Must be one of: 'btree', 'constraint', 'all'",
+                s
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IndexEntry {
     pub index_info: IndexInfo,
