@@ -20,11 +20,6 @@ pub struct Logger {
 }
 
 impl Logger {
-    #[allow(dead_code)]
-    pub fn new(log_file: String) -> Self {
-        Self::new_with_silence(log_file, false)
-    }
-
     pub fn new_with_silence(log_file: String, silence_mode: bool) -> Self {
         Self {
             log_file,
