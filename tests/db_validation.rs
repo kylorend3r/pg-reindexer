@@ -338,3 +338,194 @@ async fn test_index_type_filtering() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+#[ignore]
+async fn test_multiple_schemas_validation() -> Result<()> {
+    let client = create_test_connection().await?;
+    let test_schema1 = format!("test_schema1_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+    let test_schema2 = format!("test_schema2_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+    let test_schema3 = format!("test_schema3_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+
+    // Create multiple test schemas
+    create_test_schema(&client, &test_schema1).await?;
+    create_test_schema(&client, &test_schema2).await?;
+    create_test_schema(&client, &test_schema3).await?;
+
+    // Create tables and indexes in each schema
+    create_test_table_with_index(&client, &test_schema1, "table1", "idx1").await?;
+    create_test_table_with_index(&client, &test_schema2, "table2", "idx2").await?;
+    create_test_table_with_index(&client, &test_schema3, "table3", "idx3").await?;
+
+    // Test that all schemas exist
+    let schemas = vec![&test_schema1, &test_schema2, &test_schema3];
+    for schema in &schemas {
+        let query = "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)";
+        let row = client.query_one(query, &[schema]).await?;
+        let exists: bool = row.get(0);
+        assert!(exists, "Schema {} should exist", schema);
+    }
+
+    // Test that we can query indexes from multiple schemas
+    let query = "
+        SELECT 
+            n.nspname as schema_name,
+            i.relname as index_name,
+            t.relname as table_name
+        FROM pg_index x
+        JOIN pg_class i ON i.oid = x.indexrelid
+        JOIN pg_class t ON t.oid = x.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = ANY($1)
+        AND i.relkind = 'i'
+        ORDER BY n.nspname, i.relname
+    ";
+    let rows = client.query(query, &[&schemas]).await?;
+
+    // Should find indexes from all three schemas
+    assert!(rows.len() >= 3, "Should find at least 3 indexes (one from each schema)");
+
+    // Verify we have indexes from each schema
+    let mut found_schemas = std::collections::HashSet::new();
+    for row in &rows {
+        let schema_name: String = row.get(0);
+        found_schemas.insert(schema_name);
+    }
+
+    assert!(found_schemas.contains(&test_schema1), "Should find index from schema 1");
+    assert!(found_schemas.contains(&test_schema2), "Should find index from schema 2");
+    assert!(found_schemas.contains(&test_schema3), "Should find index from schema 3");
+
+    // Cleanup
+    drop_test_schema(&client, &test_schema1).await?;
+    drop_test_schema(&client, &test_schema2).await?;
+    drop_test_schema(&client, &test_schema3).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_get_indexes_from_multiple_schemas() -> Result<()> {
+    let client = create_test_connection().await?;
+    let test_schema1 = format!("test_schema1_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+    let test_schema2 = format!("test_schema2_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+
+    // Create test schemas
+    create_test_schema(&client, &test_schema1).await?;
+    create_test_schema(&client, &test_schema2).await?;
+
+    // Create multiple indexes in each schema
+    create_test_table_with_index(&client, &test_schema1, "table1", "idx1_schema1").await?;
+    create_test_table_with_index(&client, &test_schema1, "table2", "idx2_schema1").await?;
+    create_test_table_with_index(&client, &test_schema2, "table1", "idx1_schema2").await?;
+    create_test_table_with_index(&client, &test_schema2, "table2", "idx2_schema2").await?;
+
+    // Query indexes from both schemas using the same pattern as get_indexes_in_schemas
+    let query = "
+        SELECT 
+            n.nspname as schema_name,
+            t.relname as table_name,
+            i.relname as index_name,
+            ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
+            am.amname as index_type
+        FROM pg_index x
+        JOIN pg_class i ON i.oid = x.indexrelid
+        JOIN pg_class t ON t.oid = x.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_am am ON am.oid = i.relam
+        WHERE n.nspname = ANY($1)
+        AND i.relkind = 'i'
+        AND x.indisprimary = false
+        AND x.indisunique = false
+        AND pg_relation_size(i.oid) >= ($2::bigint*1024*1024*1024)
+        AND pg_relation_size(i.oid) < ($3::bigint*1024*1024*1024)
+        ORDER BY pg_relation_size(i.oid) ASC
+    ";
+    let schemas = vec![&test_schema1, &test_schema2];
+    let rows = client.query(query, &[&schemas, &(0i64), &(1024i64)]).await?;
+
+    // Should find all 4 indexes (2 from each schema)
+    assert!(rows.len() >= 4, "Should find at least 4 indexes from both schemas");
+
+    // Verify indexes from both schemas are present
+    let mut schema1_count = 0;
+    let mut schema2_count = 0;
+    for row in &rows {
+        let schema_name: String = row.get(0);
+        if schema_name == test_schema1 {
+            schema1_count += 1;
+        } else if schema_name == test_schema2 {
+            schema2_count += 1;
+        }
+    }
+
+    assert!(schema1_count >= 2, "Should find at least 2 indexes from schema 1");
+    assert!(schema2_count >= 2, "Should find at least 2 indexes from schema 2");
+
+    // Cleanup
+    drop_test_schema(&client, &test_schema1).await?;
+    drop_test_schema(&client, &test_schema2).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_multiple_schemas_max_limit() -> Result<()> {
+    let client = create_test_connection().await?;
+    
+    // Test that we can handle multiple schemas (testing with 10 to keep it fast)
+    let num_schemas = 10;
+    let mut test_schemas = Vec::new();
+
+    // Create multiple test schemas
+    for i in 0..num_schemas {
+        let schema_name = format!("test_schema_{}_{}", i, uuid::Uuid::new_v4().to_string().replace("-", "_"));
+        create_test_schema(&client, &schema_name).await?;
+        create_test_table_with_index(&client, &schema_name, "test_table", "test_idx").await?;
+        test_schemas.push(schema_name);
+    }
+
+    // Verify all schemas exist
+    for schema in &test_schemas {
+        let query = "SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1)";
+        let row = client.query_one(query, &[schema]).await?;
+        let exists: bool = row.get(0);
+        assert!(exists, "Schema {} should exist", schema);
+    }
+
+    // Query indexes from all schemas
+    let query = "
+        SELECT 
+            n.nspname as schema_name,
+            i.relname as index_name
+        FROM pg_index x
+        JOIN pg_class i ON i.oid = x.indexrelid
+        JOIN pg_class t ON t.oid = x.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE n.nspname = ANY($1)
+        AND i.relkind = 'i'
+    ";
+    let rows = client.query(query, &[&test_schemas]).await?;
+
+    // Should find at least one index from each schema
+    assert!(rows.len() >= num_schemas, "Should find at least {} indexes (one from each schema)", num_schemas);
+
+    // Verify we have indexes from all schemas
+    let mut found_schemas = std::collections::HashSet::new();
+    for row in &rows {
+        let schema_name: String = row.get(0);
+        found_schemas.insert(schema_name);
+    }
+
+    for schema in &test_schemas {
+        assert!(found_schemas.contains(schema), "Should find index from schema {}", schema);
+    }
+
+    // Cleanup
+    for schema in &test_schemas {
+        drop_test_schema(&client, schema).await?;
+    }
+
+    Ok(())
+}
