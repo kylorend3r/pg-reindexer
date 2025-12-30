@@ -1,5 +1,4 @@
 use crate::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
-use crate::index_operations::get_indexes_in_schema;
 use crate::types::IndexFilterType;
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -43,8 +42,8 @@ struct Args {
     #[arg(short = 'P', long, help = "Password for the PostgreSQL user")]
     password: Option<String>,
 
-    /// Schema name to reindex (required)
-    #[arg(short = 's', long, help = "Schema name to reindex")]
+    /// Schema name(s) to reindex (required). Can be a single schema or comma-separated list (max 512 schemas)
+    #[arg(short = 's', long, help = "Schema name(s) to reindex. Can be a single schema or comma-separated list (max 512 schemas)")]
     schema: String,
 
     /// Table name to reindex (optional - if not provided, reindexes all indexes in schema)
@@ -254,6 +253,24 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Parse and validate schemas
+    let schemas: Vec<String> = args.schema
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    
+    if schemas.is_empty() {
+        return Err(anyhow::anyhow!("At least one schema must be provided"));
+    }
+    
+    if schemas.len() > 512 {
+        return Err(anyhow::anyhow!(
+            "Maximum of 512 schemas allowed, but {} schemas were provided",
+            schemas.len()
+        ));
+    }
+
     // Validate arguments
     validation::validate_arguments(
         args.reindex_only_bloated,
@@ -354,19 +371,26 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Validate schema and table existence
-    validation::validate_schema_and_table(
+    // Validate schemas and table existence
+    validation::validate_schemas_and_table(
         &client,
         &logger_arc,
-        &args.schema,
+        &schemas,
         args.table.as_deref(),
     )
     .await?;
 
-    logger_arc.log(
-        logging::LogLevel::Info,
-        &format!("Discovering indexes in schema '{}'", args.schema),
-    );
+    if schemas.len() == 1 {
+        logger_arc.log(
+            logging::LogLevel::Info,
+            &format!("Discovering indexes in schema '{}'", schemas[0]),
+        );
+    } else {
+        logger_arc.log(
+            logging::LogLevel::Info,
+            &format!("Discovering indexes in {} schemas: {}", schemas.len(), schemas.join(", ")),
+        );
+    }
 
     if let Some(table) = &args.table {
         logger_arc.log(
@@ -396,11 +420,11 @@ async fn main() -> Result<()> {
     let session_id = resume_manager
         .initialize_session(
             args.resume,
-            &args.schema,
+            &schemas,
             || async {
-                get_indexes_in_schema(
+                crate::index_operations::get_indexes_in_schemas(
                     &client,
-                    &args.schema,
+                    &schemas,
                     args.table.as_deref(),
                     args.min_size_gb,
                     args.max_size_gb,
@@ -415,12 +439,12 @@ async fn main() -> Result<()> {
     let indexes = resume_manager
         .load_or_discover_indexes(
             args.resume,
-            &args.schema,
+            &schemas,
             args.table.as_deref(),
             || async {
-                get_indexes_in_schema(
+                crate::index_operations::get_indexes_in_schemas(
                     &client,
-                    &args.schema,
+                    &schemas,
                     args.table.as_deref(),
                     args.min_size_gb,
                     args.max_size_gb,
@@ -457,61 +481,121 @@ async fn main() -> Result<()> {
         if args.resume {
             // Resume mode: No pending indexes found
             if let Some(table) = &args.table {
-                logger_arc.log(
-                    logging::LogLevel::Warning,
-                    &format!(
-                        "Resume mode: No pending indexes found in state table for schema '{}' and table '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
-                        args.schema, table
-                    ),
-                );
+                if schemas.len() == 1 {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "Resume mode: No pending indexes found in state table for schema '{}' and table '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
+                            schemas[0], table
+                        ),
+                    );
+                } else {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "Resume mode: No pending indexes found in state table for {} schemas and table '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
+                            schemas.len(), table
+                        ),
+                    );
+                }
             } else {
-                logger_arc.log(
-                    logging::LogLevel::Warning,
-                    &format!(
-                        "Resume mode: No pending indexes found in state table for schema '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
-                        args.schema
-                    ),
-                );
+                if schemas.len() == 1 {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "Resume mode: No pending indexes found in state table for schema '{}'. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
+                            schemas[0]
+                        ),
+                    );
+                } else {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "Resume mode: No pending indexes found in state table for {} schemas. All indexes may have been completed. Please start the tool without --resume flag to begin a new session.",
+                            schemas.len()
+                        ),
+                    );
+                }
             }
         } else {
             // Normal mode: No indexes found
             if let Some(table) = &args.table {
-                logger_arc.log(
-                    logging::LogLevel::Warning,
-                    &format!(
-                        "No indexes found in schema '{}' for table '{}'",
-                        args.schema, table
-                    ),
-                );
+                if schemas.len() == 1 {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "No indexes found in schema '{}' for table '{}'",
+                            schemas[0], table
+                        ),
+                    );
+                } else {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "No indexes found in {} schemas for table '{}'",
+                            schemas.len(), table
+                        ),
+                    );
+                }
             } else {
-                logger_arc.log(
-                    logging::LogLevel::Warning,
-                    &format!("No indexes found in schema '{}'", args.schema),
-                );
+                if schemas.len() == 1 {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!("No indexes found in schema '{}'", schemas[0]),
+                    );
+                } else {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!("No indexes found in {} schemas", schemas.len()),
+                    );
+                }
             }
         }
         return Ok(());
     }
 
     if let Some(table) = &args.table {
-        logger_arc.log(
-            logging::LogLevel::Info,
-            &format!(
-                "Found {} indexes in schema '{}' for table '{}'",
-            indexes.len(),
-            args.schema,
-            table
-            ),
-        );
+        if schemas.len() == 1 {
+            logger_arc.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "Found {} indexes in schema '{}' for table '{}'",
+                    indexes.len(),
+                    schemas[0],
+                    table
+                ),
+            );
+        } else {
+            logger_arc.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "Found {} indexes across {} schemas for table '{}'",
+                    indexes.len(),
+                    schemas.len(),
+                    table
+                ),
+            );
+        }
     } else {
-        logger_arc.log(
-            logging::LogLevel::Info,
-            &format!(
-                "Found {} indexes in schema '{}'",
-            indexes.len(),
-            args.schema
-            ),
-        );
+        if schemas.len() == 1 {
+            logger_arc.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "Found {} indexes in schema '{}'",
+                    indexes.len(),
+                    schemas[0]
+                ),
+            );
+        } else {
+            logger_arc.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "Found {} indexes across {} schemas",
+                    indexes.len(),
+                    schemas.len()
+                ),
+            );
+        }
     }
 
     if args.dry_run {

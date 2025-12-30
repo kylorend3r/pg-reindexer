@@ -129,76 +129,80 @@ pub async fn validate_threads_and_workers(
     Ok(())
 }
 
-/// Validate schema and table existence
+/// Validate schemas and table existence
 /// 
 /// Validates:
-/// - Schema exists in the database
-/// - Table exists in the schema (if table name is provided)
-pub async fn validate_schema_and_table(
+/// - All schemas exist in the database
+/// - Table exists in all schemas (if table name is provided)
+pub async fn validate_schemas_and_table(
     client: &Client,
     logger: &Arc<Logger>,
-    schema_name: &str,
+    schema_names: &[String],
     table_name: Option<&str>,
 ) -> Result<()> {
-    // Validate that the schema exists before proceeding
     logger.log(
         crate::logging::LogLevel::Info,
-        &format!("Validating schema '{}' exists", schema_name),
+        &format!("Validating {} schema(s) exist", schema_names.len()),
     );
 
-    match schema::schema_exists(client, schema_name).await {
-        Ok(exists) => {
-            if !exists {
-                return Err(anyhow::anyhow!(
-                    "Schema '{}' does not exist in the database. Please verify the schema name and try again.",
-                    schema_name
-                ));
-            }
-            logger.log(
-                crate::logging::LogLevel::Success,
-                &format!("Schema '{}' validation passed", schema_name),
-            );
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!(
-                "Failed to validate schema '{}': {}",
-                schema_name,
-                e
-            ));
-        }
-    }
-
-    // Validate that the table exists if table name is provided
-    if let Some(table) = table_name {
-        logger.log(
-            crate::logging::LogLevel::Info,
-            &format!(
-                "Validating table '{}' exists in schema '{}'",
-                table, schema_name
-            ),
-        );
-
-        match schema::table_exists(client, schema_name, table).await {
+    // Validate all schemas exist
+    for schema_name in schema_names {
+        match schema::schema_exists(client, schema_name).await {
             Ok(exists) => {
                 if !exists {
                     return Err(anyhow::anyhow!(
-                        "Table '{}' does not exist in schema '{}'. Please verify the table name and try again.",
-                        table,
+                        "Schema '{}' does not exist in the database. Please verify the schema name and try again.",
                         schema_name
                     ));
                 }
                 logger.log(
                     crate::logging::LogLevel::Success,
-                    &format!("Table '{}' validation passed", table),
+                    &format!("Schema '{}' validation passed", schema_name),
                 );
             }
             Err(e) => {
                 return Err(anyhow::anyhow!(
-                    "Failed to validate table '{}' in schema '{}': {}",
-                    table,
+                    "Failed to validate schema '{}': {}",
                     schema_name,
                     e
                 ));
+            }
+        }
+    }
+
+    // Validate that the table exists in all schemas if table name is provided
+    if let Some(table) = table_name {
+        logger.log(
+            crate::logging::LogLevel::Info,
+            &format!(
+                "Validating table '{}' exists in {} schema(s)",
+                table, schema_names.len()
+            ),
+        );
+
+        for schema_name in schema_names {
+            match schema::table_exists(client, schema_name, table).await {
+                Ok(exists) => {
+                    if !exists {
+                        return Err(anyhow::anyhow!(
+                            "Table '{}' does not exist in schema '{}'. Please verify the table name and try again.",
+                            table,
+                            schema_name
+                        ));
+                    }
+                    logger.log(
+                        crate::logging::LogLevel::Success,
+                        &format!("Table '{}' validation passed in schema '{}'", table, schema_name),
+                    );
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to validate table '{}' in schema '{}': {}",
+                        table,
+                        schema_name,
+                        e
+                    ));
+                }
             }
         }
     }
