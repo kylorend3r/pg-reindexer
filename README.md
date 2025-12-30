@@ -48,6 +48,9 @@ pg-reindexer --schema public --dry-run
 # Reindex all indexes in a schema
 pg-reindexer --schema public
 
+# Reindex indexes from multiple schemas (comma-separated, max 512)
+pg-reindexer --schema public,app_schema,analytics_schema
+
 # Reindex indexes for a specific table
 pg-reindexer --schema public --table users
 
@@ -84,11 +87,17 @@ pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-self-si
 # Dry run (always test first!)
 pg-reindexer --schema public --dry-run
 
+# Reindex indexes from multiple schemas
+pg-reindexer --schema public,app_schema,analytics_schema
+
 # Reindex only b-tree indexes
 pg-reindexer --schema public --index-type btree
 
 # Reindex only constraints
 pg-reindexer --schema public --index-type constraint
+
+# Reindex constraints from multiple schemas
+pg-reindexer --schema public,app_schema --index-type constraint
 
 # Specific table reindexing
 pg-reindexer --schema public --table users
@@ -140,6 +149,9 @@ pg-reindexer --schema public --min-size-gb 100
 
 # Size range filtering (1GB to 50GB)
 pg-reindexer --schema public --min-size-gb 1 --max-size-gb 50
+
+# Size filtering across multiple schemas
+pg-reindexer --schema public,app_schema --min-size-gb 1 --max-size-gb 50
 ```
 
 **Note**: The tool will log the index size limits being applied for clarity:
@@ -155,6 +167,9 @@ pg-reindexer --schema public --index-type btree
 
 # Reindex only primary keys and unique constraints
 pg-reindexer --schema public --index-type constraint
+
+# Reindex b-tree indexes from multiple schemas
+pg-reindexer --schema public,app_schema --index-type btree
 
 # Combine with size filtering
 pg-reindexer --schema public --index-type constraint --min-size-gb 1 --max-size-gb 10
@@ -172,6 +187,9 @@ pg-reindexer --schema public --table users --index-type btree
 ```bash
 # Only reindex indexes with bloat ratio >= 15%
 pg-reindexer --schema public --reindex-only-bloated 15
+
+# Bloat-based reindexing across multiple schemas
+pg-reindexer --schema public,app_schema,analytics_schema --reindex-only-bloated 15
 ```
 
 ### 🔄 **Resume Interrupted Sessions**
@@ -185,6 +203,9 @@ pg-reindexer --schema public --resume --threads 8 --maintenance-work-mem-gb 4
 
 # Resume and clean orphaned indexes
 pg-reindexer --schema public --resume --clean-orphaned-indexes
+
+# Resume for multiple schemas
+pg-reindexer --schema public,app_schema,analytics_schema --resume
 ```
 
 **Note**: The `--resume` option will continue processing indexes that were pending, failed, or in progress from a previous session. Completed indexes are preserved and will not be reindexed again.
@@ -259,6 +280,9 @@ pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-paral
 # Maintenance window (high performance)
 pg-reindexer --schema public --threads 8 --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4 --maintenance-io-concurrency 256
 
+# Reindex multiple schemas during maintenance window
+pg-reindexer --schema public,app_schema,analytics_schema --threads 8 --maintenance-work-mem-gb 4
+
 # Emergency operation (maximum safety)
 pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1 --skip-inactive-replication-slots --skip-sync-replication-connection --skip-active-vacuums
 
@@ -267,6 +291,9 @@ pg-reindexer --schema public --threads 2 --maintenance-work-mem-gb 2 --max-paral
 
 # Production with SSL connection
 pg-reindexer --schema public --host prod-db.company.com --ssl --threads 2 --maintenance-work-mem-gb 2
+
+# Multiple schemas with SSL connection
+pg-reindexer --schema public,app_schema --host prod-db.company.com --ssl --threads 4 --maintenance-work-mem-gb 2
 ```
 
 
@@ -281,7 +308,10 @@ export PG_USER=postgres
 export PG_PASSWORD=mypassword
 
 # Then run without connection parameters
-pg-reindexer --schema public 
+pg-reindexer --schema public
+
+# Multiple schemas with environment variables
+pg-reindexer --schema public,app_schema,analytics_schema 
 
 # SSL connection with environment variables
 export PG_HOST=your-postgres-server.com
@@ -317,13 +347,15 @@ PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table
 
 Usage: pg-reindexer [OPTIONS] --schema <SCHEMA>
 
+Note: The --schema parameter accepts a single schema name or a comma-separated list of schema names (maximum 512 schemas).
+
 Options:
   -H, --host <HOST>                                    PostgreSQL host (can also be set via PG_HOST environment variable)
   -p, --port <PORT>                                     PostgreSQL port (can also be set via PG_PORT environment variable)
   -d, --database <DATABASE>                             Database name (can also be set via PG_DATABASE environment variable)
   -U, --username <USERNAME>                             Username (can also be set via PG_USER environment variable)
   -P, --password <PASSWORD>                             Password (can also be set via PG_PASSWORD environment variable)
-  -s, --schema <SCHEMA>                                 Schema name to reindex (required)
+  -s, --schema <SCHEMA>                                 Schema name(s) to reindex (required). Can be a single schema or comma-separated list (max 512 schemas)
   -t, --table <TABLE>                                   Table name to reindex (optional - if not provided, reindexes all indexes in schema)
   -f, --dry-run                                         Dry run - show what would be reindexed without actually doing it
   -n, --threads <THREADS>                               Number of concurrent threads for reindexing (default: 2, max: 32) [default: 2]
@@ -357,6 +389,7 @@ Options:
 
 ### 🎯 **Granular Maintenance Control**
 - **Schema-level Reindexing**: Reindex all indexes in a specific schema for comprehensive maintenance
+- **Multiple Schema Support**: Reindex indexes across multiple schemas in a single operation (comma-separated list, max 512 schemas)
 - **Table-level Reindexing**: Target specific tables for focused maintenance cycles
 - **Index Type Filtering**: Choose between regular b-tree indexes or primary keys/unique constraints
 - **Index Exclusion**: Exclude specific indexes from reindexing using comma-separated lists
