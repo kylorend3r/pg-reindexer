@@ -25,19 +25,13 @@ pub async fn get_indexes_in_schema(
     max_size_gb: u64,
     index_type: IndexFilterType,
 ) -> Result<Vec<IndexInfo>> {
-    let query = match (table_name, index_type) {
-        (Some(_), IndexFilterType::Btree) => crate::queries::GET_BTREE_INDEXES_IN_SCHEMA_WITH_TABLE,
-        (Some(_), IndexFilterType::Constraint) => crate::queries::GET_CONSTRAINT_INDEXES_IN_SCHEMA_WITH_TABLE,
-        (Some(_), IndexFilterType::All) => crate::queries::GET_INDEXES_IN_SCHEMA_WITH_TABLE,
-        (None, IndexFilterType::Btree) => crate::queries::GET_BTREE_INDEXES_IN_SCHEMA,
-        (None, IndexFilterType::Constraint) => crate::queries::GET_CONSTRAINT_INDEXES_IN_SCHEMA,
-        (None, IndexFilterType::All) => crate::queries::GET_INDEXES_IN_SCHEMA,
-    };
+    let has_table_filter = table_name.is_some();
+    let query = crate::queries::build_indexes_query(has_table_filter, index_type);
 
     let rows = if let Some(table) = table_name {
         client
             .query(
-                query,
+                &query,
                 &[
                     &schema_name,
                     &table,
@@ -49,7 +43,7 @@ pub async fn get_indexes_in_schema(
     } else {
         client
             .query(
-                query,
+                &query,
                 &[&schema_name, &(min_size_gb as i64), &(max_size_gb as i64)],
             )
             .await
