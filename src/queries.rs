@@ -1,3 +1,5 @@
+use crate::types::IndexFilterType;
+
 // SQL queries used throughout the application
 pub const GET_ACTIVE_VACUUM: &str = r#"
     SELECT * FROM pg_stat_activity 
@@ -6,138 +8,69 @@ pub const GET_ACTIVE_VACUUM: &str = r#"
     AND pid != pg_backend_pid();
 "#;
 
-pub const GET_INDEXES_IN_SCHEMA_WITH_TABLE: &str = r#"
-    SELECT 
-        n.nspname as schema_name,
-        t.relname as table_name,
-        i.relname as index_name,
-        ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
-        am.amname as index_type
-    FROM pg_index x
-    JOIN pg_class i ON i.oid = x.indexrelid
-    JOIN pg_class t ON t.oid = x.indrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    JOIN pg_am am ON am.oid = i.relam
-    WHERE n.nspname = $1
-    AND t.relname = $2
-    AND i.relkind = 'i'
-    AND x.indisprimary = false
-    AND x.indisunique = false
-    AND pg_relation_size(i.oid) >= ($3::bigint*1024*1024*1024)
-    AND pg_relation_size(i.oid) < ($4::bigint*1024*1024*1024)
-    ORDER BY pg_relation_size(i.oid) ASC;
-"#;
+/// Builds the SQL query for fetching indexes based on filters
+/// 
+/// # Parameters
+/// - `has_table_filter`: If true, includes `t.relname = $2` condition
+/// - `index_type`: Determines the index type filter (All, Btree, or Constraint)
+/// 
+/// # Returns
+/// The constructed SQL query string
+pub fn build_indexes_query(has_table_filter: bool, index_type: IndexFilterType) -> String {
+    // Base query structure (common to all variants)
+    let base_query = r#"
+        SELECT 
+            n.nspname as schema_name,
+            t.relname as table_name,
+            i.relname as index_name,
+            ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
+            am.amname as index_type
+        FROM pg_index x
+        JOIN pg_class i ON i.oid = x.indexrelid
+        JOIN pg_class t ON t.oid = x.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_am am ON am.oid = i.relam
+        WHERE n.nspname = $1"#;
 
-// Query for b-tree indexes only (with table filter)
-pub const GET_BTREE_INDEXES_IN_SCHEMA_WITH_TABLE: &str = r#"
-    SELECT 
-        n.nspname as schema_name,
-        t.relname as table_name,
-        i.relname as index_name,
-        ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
-        am.amname as index_type
-    FROM pg_index x
-    JOIN pg_class i ON i.oid = x.indexrelid
-    JOIN pg_class t ON t.oid = x.indrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    JOIN pg_am am ON am.oid = i.relam
-    WHERE n.nspname = $1
-    AND t.relname = $2
-    AND i.relkind = 'i'
-    AND x.indisprimary = false
-    AND x.indisunique = false
-    AND am.amname = 'btree'
-    AND pg_relation_size(i.oid) >= ($3::bigint*1024*1024*1024)
-    AND pg_relation_size(i.oid) < ($4::bigint*1024*1024*1024)
-    ORDER BY pg_relation_size(i.oid) ASC;
-"#;
-
-// Query for constraint indexes only (with table filter)
-pub const GET_CONSTRAINT_INDEXES_IN_SCHEMA_WITH_TABLE: &str = r#"
-    SELECT 
-        n.nspname as schema_name,
-        t.relname as table_name,
-        i.relname as index_name,
-        ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
-        am.amname as index_type
-    FROM pg_index x
-    JOIN pg_class i ON i.oid = x.indexrelid
-    JOIN pg_class t ON t.oid = x.indrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    JOIN pg_am am ON am.oid = i.relam
-    WHERE n.nspname = $1
-    AND t.relname = $2
-    AND i.relkind = 'i'
-    AND (x.indisprimary = true OR x.indisunique = true)
-    AND pg_relation_size(i.oid) >= ($3::bigint*1024*1024*1024)
-    AND pg_relation_size(i.oid) < ($4::bigint*1024*1024*1024)
-    ORDER BY pg_relation_size(i.oid) ASC;
-"#;
-
-pub const GET_INDEXES_IN_SCHEMA: &str = r#"
-    SELECT 
-        n.nspname as schema_name,
-        t.relname as table_name,
-        i.relname as index_name,
-        ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
-        am.amname as index_type
-    FROM pg_index x
-    JOIN pg_class i ON i.oid = x.indexrelid
-    JOIN pg_class t ON t.oid = x.indrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    JOIN pg_am am ON am.oid = i.relam
-    WHERE n.nspname = $1
-    AND i.relkind = 'i'
-    AND x.indisprimary = false
-    AND x.indisunique = false
-    AND pg_relation_size(i.oid) >= ($2::bigint*1024*1024*1024)
-    AND pg_relation_size(i.oid) < ($3::bigint*1024*1024*1024)
-    ORDER BY pg_relation_size(i.oid) ASC;
-"#;
-
-// Query for b-tree indexes only (without table filter)
-pub const GET_BTREE_INDEXES_IN_SCHEMA: &str = r#"
-    SELECT 
-        n.nspname as schema_name,
-        t.relname as table_name,
-        i.relname as index_name,
-        ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
-        am.amname as index_type
-    FROM pg_index x
-    JOIN pg_class i ON i.oid = x.indexrelid
-    JOIN pg_class t ON t.oid = x.indrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    JOIN pg_am am ON am.oid = i.relam
-    WHERE n.nspname = $1
-    AND i.relkind = 'i'
-    AND x.indisprimary = false
-    AND x.indisunique = false
-    AND am.amname = 'btree'
-    AND pg_relation_size(i.oid) >= ($2::bigint*1024*1024*1024)
-    AND pg_relation_size(i.oid) < ($3::bigint*1024*1024*1024)
-    ORDER BY pg_relation_size(i.oid) ASC;
-"#;
-
-// Query for constraint indexes only (without table filter)
-pub const GET_CONSTRAINT_INDEXES_IN_SCHEMA: &str = r#"
-    SELECT 
-        n.nspname as schema_name,
-        t.relname as table_name,
-        i.relname as index_name,
-        ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
-        am.amname as index_type
-    FROM pg_index x
-    JOIN pg_class i ON i.oid = x.indexrelid
-    JOIN pg_class t ON t.oid = x.indrelid
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    JOIN pg_am am ON am.oid = i.relam
-    WHERE n.nspname = $1
-    AND i.relkind = 'i'
-    AND (x.indisprimary = true OR x.indisunique = true)
-    AND pg_relation_size(i.oid) >= ($2::bigint*1024*1024*1024)
-    AND pg_relation_size(i.oid) < ($3::bigint*1024*1024*1024)
-    ORDER BY pg_relation_size(i.oid) ASC;
-"#;
+    // Build WHERE clause conditions
+    let mut conditions = vec!["    AND i.relkind = 'i'".to_string()];
+    
+    // Add table filter if needed
+    if has_table_filter {
+        conditions.push("    AND t.relname = $2".to_string());
+    }
+    
+    // Add index type filter
+    match index_type {
+        IndexFilterType::Btree => {
+            conditions.push("    AND x.indisprimary = false".to_string());
+            conditions.push("    AND x.indisunique = false".to_string());
+            conditions.push("    AND am.amname = 'btree'".to_string());
+        }
+        IndexFilterType::Constraint => {
+            conditions.push("    AND (x.indisprimary = true OR x.indisunique = true)".to_string());
+        }
+        IndexFilterType::All => {
+            conditions.push("    AND x.indisprimary = false".to_string());
+            conditions.push("    AND x.indisunique = false".to_string());
+        }
+    }
+    
+    // Add size filters with correct parameter positions
+    let size_param_start = if has_table_filter { 3 } else { 2 };
+    conditions.push(format!(
+        "    AND pg_relation_size(i.oid) >= (${}::bigint*1024*1024*1024)",
+        size_param_start
+    ));
+    conditions.push(format!(
+        "    AND pg_relation_size(i.oid) < (${}::bigint*1024*1024*1024)",
+        size_param_start + 1
+    ));
+    
+    // Build final query
+    let where_clause = conditions.join("\n");
+    format!("{}\n{}\n    ORDER BY pg_relation_size(i.oid) ASC;", base_query, where_clause)
+}
 
 pub const GET_INDEX_SIZE: &str = r#"
     SELECT pg_relation_size(i.oid) as index_size
