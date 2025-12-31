@@ -159,22 +159,7 @@ impl ReindexOrchestrator {
                     connection_string.to_string(),
                     memory_table,
                     logger,
-                    config.maintenance_work_mem_gb,
-                    config.max_parallel_maintenance_workers,
-                    config.maintenance_io_concurrency,
-                    config.lock_timeout_seconds,
-                    config.skip_inactive_replication_slots,
-                    config.skip_sync_replication_connection,
-                    config.skip_active_vacuums,
-                    config.bloat_threshold,
-                    config.concurrently,
-                    config.use_ssl,
-                    config.accept_invalid_certs,
-                    config.ssl_ca_cert,
-                    config.ssl_client_cert,
-                    config.ssl_client_key,
-                    config.user_index_type,
-                    config.session_id,
+                    config,
                 )
                 .await
             });
