@@ -1,6 +1,7 @@
 use crate::config::DEFAULT_RETRY_DELAY_MS;
 use crate::logging;
 use crate::memory_table::SharedIndexMemoryTable;
+use crate::orchestrator::WorkerConfig;
 use crate::types::{IndexInfo, IndexFilterType};
 use anyhow::{Context, Result};
 use std::sync::Arc;
@@ -139,22 +140,7 @@ pub async fn worker_with_memory_table(
     connection_string: String,
     memory_table: Arc<SharedIndexMemoryTable>,
     logger: Arc<logging::Logger>,
-    maintenance_work_mem_gb: u64,
-    max_parallel_maintenance_workers: u64,
-    maintenance_io_concurrency: u64,
-    lock_timeout_seconds: u64,
-    skip_inactive_replication_slots: bool,
-    skip_sync_replication_connection: bool,
-    skip_active_vacuums: bool,
-    bloat_threshold: Option<u8>,
-    concurrently: bool,
-    use_ssl: bool,
-    accept_invalid_certs: bool,
-    ssl_ca_cert: Option<String>,
-    ssl_client_cert: Option<String>,
-    ssl_client_key: Option<String>,
-    user_index_type: IndexFilterType,
-    session_id: Option<String>,
+    config: WorkerConfig,
 ) -> Result<()> {
     logger.log(
         logging::LogLevel::Info,
@@ -164,15 +150,15 @@ pub async fn worker_with_memory_table(
     // Create a connection for this worker
     let client = crate::connection::create_connection_with_session_parameters_ssl(
         &connection_string,
-        maintenance_work_mem_gb,
-        max_parallel_maintenance_workers,
-        maintenance_io_concurrency,
-        lock_timeout_seconds,
-        use_ssl,
-        accept_invalid_certs,
-        ssl_ca_cert,
-        ssl_client_cert,
-        ssl_client_key,
+        config.maintenance_work_mem_gb,
+        config.max_parallel_maintenance_workers,
+        config.maintenance_io_concurrency,
+        config.lock_timeout_seconds,
+        config.use_ssl,
+        config.accept_invalid_certs,
+        config.ssl_ca_cert.clone(),
+        config.ssl_client_cert.clone(),
+        config.ssl_client_key.clone(),
         &logger,
     )
     .await?;
@@ -195,7 +181,7 @@ pub async fn worker_with_memory_table(
             );
 
             // Mark index as in_progress in state table if session_id is provided
-            if let Some(ref sid) = session_id {
+            if let Some(ref sid) = config.session_id {
                 if let Err(e) = crate::state::mark_index_in_progress(
                     &client,
                     &index_info.schema_name,
@@ -219,14 +205,14 @@ pub async fn worker_with_memory_table(
                 client.clone(),
                 index_info.clone(),
                 worker_id,
-                skip_inactive_replication_slots,
-                skip_sync_replication_connection,
-                skip_active_vacuums,
+                config.skip_inactive_replication_slots,
+                config.skip_sync_replication_connection,
+                config.skip_active_vacuums,
                 logger.clone(),
-                bloat_threshold,
-                concurrently,
-                user_index_type,
-                session_id.clone(),
+                config.bloat_threshold,
+                config.concurrently,
+                config.user_index_type,
+                config.session_id.clone(),
             )
             .await;
 
@@ -246,7 +232,7 @@ pub async fn worker_with_memory_table(
                         _ => crate::state::ReindexState::Failed,
                     };
 
-                    if let Some(ref _sid) = session_id {
+                    if let Some(ref _sid) = config.session_id {
                         if let Err(e) = crate::state::update_index_state(
                             &client,
                             &index_info.schema_name,
@@ -313,7 +299,7 @@ pub async fn worker_with_memory_table(
                     );
                     
                     // Update state table
-                    if let Some(ref _sid) = session_id {
+                    if let Some(ref _sid) = config.session_id {
                         if let Err(err) = crate::state::update_index_state(
                             &client,
                             &index_info.schema_name,
