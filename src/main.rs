@@ -253,21 +253,21 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Parse and validate schemas
-    let schemas: Vec<String> = args.schema
+    // Parse schemas
+    let parsed_schemas: Vec<String> = args.schema
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
     
-    if schemas.is_empty() {
+    if parsed_schemas.is_empty() {
         return Err(anyhow::anyhow!("At least one schema must be provided"));
     }
     
-    if schemas.len() > 512 {
+    if parsed_schemas.len() > 512 {
         return Err(anyhow::anyhow!(
             "Maximum of 512 schemas allowed, but {} schemas were provided",
-            schemas.len()
+            parsed_schemas.len()
         ));
     }
 
@@ -284,6 +284,30 @@ async fn main() -> Result<()> {
     // Initialize logger with silence mode if enabled
     let logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
     let logger_arc = Arc::new(logger);
+
+    // Deduplicate schemas and warn if duplicates were found
+    let mut schemas: Vec<String> = Vec::new();
+    let mut seen_schemas: HashSet<String> = HashSet::new();
+    let mut duplicate_count = 0;
+    
+    for schema in parsed_schemas {
+        if seen_schemas.contains(&schema) {
+            duplicate_count += 1;
+        } else {
+            seen_schemas.insert(schema.clone());
+            schemas.push(schema);
+        }
+    }
+    
+    if duplicate_count > 0 {
+        logger_arc.log(
+            logging::LogLevel::Warning,
+            &format!(
+                "Found {} duplicate schema name(s) in the provided list. Duplicates have been removed.",
+                duplicate_count
+            ),
+        );
+    }
     
     // Print startup message (always visible, even in silence mode)
     if args.silence_mode {
