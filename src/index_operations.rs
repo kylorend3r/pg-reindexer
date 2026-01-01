@@ -66,6 +66,33 @@ pub async fn get_indexes_in_schema(
     Ok(indexes)
 }
 
+/// Get indexes from multiple schemas
+pub async fn get_indexes_in_schemas(
+    client: &tokio_postgres::Client,
+    schema_names: &[String],
+    table_name: Option<&str>,
+    min_size_gb: u64,
+    max_size_gb: u64,
+    index_type: IndexFilterType,
+) -> Result<Vec<IndexInfo>> {
+    let mut all_indexes = Vec::new();
+
+    for schema_name in schema_names {
+        let indexes = get_indexes_in_schema(
+            client,
+            schema_name,
+            table_name,
+            min_size_gb,
+            max_size_gb,
+            index_type,
+        )
+        .await?;
+        all_indexes.extend(indexes);
+    }
+
+    Ok(all_indexes)
+}
+
 pub async fn get_index_size(
     client: &tokio_postgres::Client,
     schema_name: &str,

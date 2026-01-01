@@ -149,6 +149,14 @@ pub async fn clear_schema_state(client: &Client, schema_name: &str) -> Result<()
     Ok(())
 }
 
+/// Clear all state for multiple schemas (start fresh)
+pub async fn clear_schemas_state(client: &Client, schema_names: &[String]) -> Result<()> {
+    for schema_name in schema_names {
+        clear_schema_state(client, schema_name).await?;
+    }
+    Ok(())
+}
+
 // Removed get_state_statistics as it's not currently used
 
 /// Check if there are any pending indexes in the state table
@@ -219,6 +227,22 @@ pub async fn load_pending_indexes(
     Ok(indexes)
 }
 
+/// Load pending indexes from state table for multiple schemas (excludes completed and skipped)
+pub async fn load_pending_indexes_for_schemas(
+    client: &Client,
+    schema_names: &[String],
+    table_name: Option<&str>,
+) -> Result<Vec<IndexInfo>> {
+    let mut all_indexes = Vec::new();
+    
+    for schema_name in schema_names {
+        let indexes = load_pending_indexes(client, schema_name, table_name).await?;
+        all_indexes.extend(indexes);
+    }
+    
+    Ok(all_indexes)
+}
+
 /// Resume manager for handling resume logic and session initialization
 pub struct ResumeManager<'a> {
     client: &'a Client,
@@ -236,7 +260,7 @@ impl<'a> ResumeManager<'a> {
     /// # Arguments
     /// 
     /// * `resume` - Whether to resume from previous state
-    /// * `schema_name` - Schema name to work with
+    /// * `schema_names` - Schema names to work with
     /// * `discover_indexes` - Function to discover indexes from database (used when starting fresh)
     /// 
     /// # Returns
@@ -245,7 +269,7 @@ impl<'a> ResumeManager<'a> {
     pub async fn initialize_session<F, Fut>(
         &self,
         resume: bool,
-        schema_name: &str,
+        schema_names: &[String],
         discover_indexes: F,
     ) -> Result<Option<String>>
     where
@@ -289,22 +313,43 @@ impl<'a> ResumeManager<'a> {
                 }
             }
         } else {
-            // Normal mode - start from zero by clearing existing state for this schema
-            self.logger.log(
-                crate::logging::LogLevel::Info,
-                &format!("Starting fresh: clearing any existing state for schema '{}'", schema_name),
-            );
-            
-            if let Err(e) = clear_schema_state(&self.client, schema_name).await {
+            // Normal mode - start from zero by clearing existing state for all schemas
+            if schema_names.len() == 1 {
                 self.logger.log(
-                    crate::logging::LogLevel::Warning,
-                    &format!("Failed to clear existing state for schema '{}': {}", schema_name, e),
+                    crate::logging::LogLevel::Info,
+                    &format!("Starting fresh: clearing any existing state for schema '{}'", schema_names[0]),
                 );
             } else {
                 self.logger.log(
-                    crate::logging::LogLevel::Success,
-                    &format!("Cleared existing state for schema '{}'", schema_name),
+                    crate::logging::LogLevel::Info,
+                    &format!("Starting fresh: clearing any existing state for {} schemas", schema_names.len()),
                 );
+            }
+            
+            if let Err(e) = clear_schemas_state(&self.client, schema_names).await {
+                if schema_names.len() == 1 {
+                    self.logger.log(
+                        crate::logging::LogLevel::Warning,
+                        &format!("Failed to clear existing state for schema '{}': {}", schema_names[0], e),
+                    );
+                } else {
+                    self.logger.log(
+                        crate::logging::LogLevel::Warning,
+                        &format!("Failed to clear existing state for {} schemas: {}", schema_names.len(), e),
+                    );
+                }
+            } else {
+                if schema_names.len() == 1 {
+                    self.logger.log(
+                        crate::logging::LogLevel::Success,
+                        &format!("Cleared existing state for schema '{}'", schema_names[0]),
+                    );
+                } else {
+                    self.logger.log(
+                        crate::logging::LogLevel::Success,
+                        &format!("Cleared existing state for {} schemas", schema_names.len()),
+                    );
+                }
             }
             
             Ok(Some(generate_session_id()))
@@ -316,7 +361,7 @@ impl<'a> ResumeManager<'a> {
     /// # Arguments
     /// 
     /// * `resume` - Whether to resume from previous state
-    /// * `schema_name` - Schema name to work with
+    /// * `schema_names` - Schema names to work with
     /// * `table_name` - Optional table name to filter by
     /// * `discover_indexes` - Function to discover indexes from database (used in normal mode)
     /// 
@@ -326,7 +371,7 @@ impl<'a> ResumeManager<'a> {
     pub async fn load_or_discover_indexes<F, Fut>(
         &self,
         resume: bool,
-        schema_name: &str,
+        schema_names: &[String],
         table_name: Option<&str>,
         discover_indexes: F,
     ) -> Result<Vec<IndexInfo>>
@@ -341,7 +386,7 @@ impl<'a> ResumeManager<'a> {
                 "Resume mode: Loading pending indexes from state table...",
             );
             
-            load_pending_indexes(&self.client, schema_name, table_name).await
+            load_pending_indexes_for_schemas(&self.client, schema_names, table_name).await
         } else {
             // Normal mode: Discover indexes from database
             discover_indexes().await
