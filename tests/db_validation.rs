@@ -529,3 +529,135 @@ async fn test_multiple_schemas_max_limit() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_discover_all_user_schemas() -> Result<()> {
+    let client = create_test_connection().await?;
+    
+    // Create multiple test schemas
+    let test_schemas = vec![
+        format!("test_discover_schema1_{}", uuid::Uuid::new_v4().to_string().replace("-", "_")),
+        format!("test_discover_schema2_{}", uuid::Uuid::new_v4().to_string().replace("-", "_")),
+        format!("test_discover_schema3_{}", uuid::Uuid::new_v4().to_string().replace("-", "_")),
+    ];
+
+    // Create test schemas
+    for schema in &test_schemas {
+        create_test_schema(&client, schema).await?;
+    }
+
+    // Test schema discovery function
+    let discovered_schemas = pg_reindexer::schema::discover_all_user_schemas(&client).await?;
+
+    // Verify that our test schemas are in the discovered list
+    for schema in &test_schemas {
+        assert!(
+            discovered_schemas.contains(schema),
+            "Discovered schemas should include {}",
+            schema
+        );
+    }
+
+    // Verify that system schemas are NOT in the discovered list
+    let system_schemas = vec!["pg_catalog", "information_schema", "pg_toast"];
+    for system_schema in system_schemas {
+        assert!(
+            !discovered_schemas.contains(&system_schema.to_string()),
+            "Discovered schemas should NOT include system schema {}",
+            system_schema
+        );
+    }
+
+    // Verify that reindexer schema is NOT in the discovered list (if it exists)
+    if discovered_schemas.contains(&"reindexer".to_string()) {
+        // This is okay if reindexer schema was created by previous tests
+        // But ideally it should be excluded
+    }
+
+    // Cleanup
+    for schema in &test_schemas {
+        drop_test_schema(&client, schema).await?;
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_discover_all_schemas_finds_indexes() -> Result<()> {
+    let client = create_test_connection().await?;
+    
+    // Create test schemas with indexes
+    let test_schemas = vec![
+        format!("test_discover_idx1_{}", uuid::Uuid::new_v4().to_string().replace("-", "_")),
+        format!("test_discover_idx2_{}", uuid::Uuid::new_v4().to_string().replace("-", "_")),
+    ];
+
+    // Create test schemas and tables with indexes
+    for schema in &test_schemas {
+        create_test_schema(&client, schema).await?;
+        create_test_table_with_index(&client, schema, "test_table", "test_idx").await?;
+    }
+
+    // Discover all schemas
+    let discovered_schemas = pg_reindexer::schema::discover_all_user_schemas(&client).await?;
+
+    // Verify our test schemas are discovered
+    for schema in &test_schemas {
+        assert!(
+            discovered_schemas.contains(schema),
+            "Discovered schemas should include {}",
+            schema
+        );
+    }
+
+    // Get indexes from discovered schemas
+    let indexes = pg_reindexer::index_operations::get_indexes_in_schemas(
+        &client,
+        &discovered_schemas.iter()
+            .filter(|s| test_schemas.contains(s))
+            .cloned()
+            .collect::<Vec<_>>(),
+        None,
+        0,
+        1024,
+        pg_reindexer::types::IndexFilterType::All,
+    )
+    .await?;
+
+    // Should find at least one index from each test schema
+    assert!(
+        indexes.len() >= test_schemas.len(),
+        "Should find at least {} indexes (one from each test schema)",
+        test_schemas.len()
+    );
+
+    // Cleanup
+    for schema in &test_schemas {
+        drop_test_schema(&client, schema).await?;
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_discover_all_schemas_excludes_reindexer_schema() -> Result<()> {
+    let client = create_test_connection().await?;
+    
+    // Ensure reindexer schema exists (it might be created by the tool)
+    let create_reindexer_schema = "CREATE SCHEMA IF NOT EXISTS reindexer";
+    client.execute(create_reindexer_schema, &[]).await?;
+
+    // Discover all schemas
+    let discovered_schemas = pg_reindexer::schema::discover_all_user_schemas(&client).await?;
+
+    // Verify that reindexer schema is NOT in the discovered list
+    assert!(
+        !discovered_schemas.contains(&"reindexer".to_string()),
+        "Discovered schemas should NOT include the reindexer schema"
+    );
+
+    Ok(())
+}

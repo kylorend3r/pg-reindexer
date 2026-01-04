@@ -1,23 +1,9 @@
-use crate::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
-use crate::types::IndexFilterType;
+use pg_reindexer::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
+use pg_reindexer::types::IndexFilterType;
+use pg_reindexer::{logging, memory_table, orchestrator, queries, schema, state, validation};
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::{collections::HashSet, sync::Arc};
-
-mod checks;
-mod config;
-mod connection;
-mod credentials;
-mod index_operations;
-mod logging;
-mod memory_table;
-mod orchestrator;
-mod queries;
-mod save;
-mod schema;
-mod state;
-mod types;
-mod validation;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
@@ -42,9 +28,17 @@ struct Args {
     #[arg(short = 'P', long, help = "Password for the PostgreSQL user")]
     password: Option<String>,
 
-    /// Schema name(s) to reindex (required). Can be a single schema or comma-separated list (max 512 schemas)
-    #[arg(short = 's', long, help = "Schema name(s) to reindex. Can be a single schema or comma-separated list (max 512 schemas)")]
-    schema: String,
+    /// Schema name(s) to reindex. Can be a single schema or comma-separated list (max 512 schemas). Not required if --discover-all-schemas is used.
+    #[arg(short = 's', long, help = "Schema name(s) to reindex. Can be a single schema or comma-separated list (max 512 schemas). Not required if --discover-all-schemas is used.")]
+    schema: Option<String>,
+
+    /// Discover all schemas in the database and collect indexes for all discovered schemas
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Discover all user schemas in the database and collect indexes for all discovered schemas. System schemas (pg_catalog, information_schema, etc.) are excluded."
+    )]
+    discover_all_schemas: bool,
 
     /// Table name to reindex (optional - if not provided, reindexes all indexes in schema)
     #[arg(short = 't', long, help = "Table name to reindex")]
@@ -253,18 +247,30 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Parse schemas
-    let parsed_schemas: Vec<String> = args.schema
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
-    
-    if parsed_schemas.is_empty() {
-        return Err(anyhow::anyhow!("At least one schema must be provided"));
+    // Validate that either schema is provided or discover_all_schemas is enabled
+    if args.schema.is_none() && !args.discover_all_schemas {
+        return Err(anyhow::anyhow!(
+            "Either --schema must be provided or --discover-all-schemas must be enabled"
+        ));
     }
+
+    // If both are provided, schema takes precedence (but warn the user)
+    if args.schema.is_some() && args.discover_all_schemas {
+        eprintln!("Warning: Both --schema and --discover-all-schemas are provided. --schema will be used and --discover-all-schemas will be ignored.");
+    }
+
+    // Parse schemas - will be discovered later if discover_all_schemas is enabled
+    let parsed_schemas: Vec<String> = if let Some(schema_str) = &args.schema {
+        schema_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        Vec::new()
+    };
     
-    if parsed_schemas.len() > 512 {
+    if !parsed_schemas.is_empty() && parsed_schemas.len() > 512 {
         return Err(anyhow::anyhow!(
             "Maximum of 512 schemas allowed, but {} schemas were provided",
             parsed_schemas.len()
@@ -285,36 +291,7 @@ async fn main() -> Result<()> {
     let logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
     let logger_arc = Arc::new(logger);
 
-    // Deduplicate schemas and warn if duplicates were found
-    let mut schemas: Vec<String> = Vec::new();
-    let mut seen_schemas: HashSet<String> = HashSet::new();
-    let mut duplicate_count = 0;
-    
-    for schema in parsed_schemas {
-        if seen_schemas.contains(&schema) {
-            duplicate_count += 1;
-        } else {
-            seen_schemas.insert(schema.clone());
-            schemas.push(schema);
-        }
-    }
-    
-    if duplicate_count > 0 {
-        logger_arc.log(
-            logging::LogLevel::Warning,
-            &format!(
-                "Found {} duplicate schema name(s) in the provided list. Duplicates have been removed.",
-                duplicate_count
-            ),
-        );
-    }
-    
-    // Print startup message (always visible, even in silence mode)
-    if args.silence_mode {
-        println!("Starting PostgreSQL reindexer (silence mode enabled - logs are being written to {})", args.log_file);
-    }
-
-    // Build connection configuration from arguments
+    // Build connection configuration from arguments (needed early for schema discovery)
     let connection_config = ConnectionConfig::from_args(
         args.host.clone(),
         args.port,
@@ -330,6 +307,83 @@ async fn main() -> Result<()> {
 
     let connection_string = connection_config.build_connection_string();
 
+    // Discover schemas if discover_all_schemas is enabled
+    let schemas: Vec<String> = if args.discover_all_schemas && args.schema.is_none() {
+        logger_arc.log(
+            logging::LogLevel::Info,
+            "Discovering all user schemas in the database...",
+        );
+
+        // Connect to PostgreSQL for schema discovery
+        let discovery_client = create_connection_ssl(
+            &connection_string,
+            connection_config.ssl,
+            connection_config.ssl_self_signed,
+            connection_config.ssl_ca_cert.clone(),
+            connection_config.ssl_client_cert.clone(),
+            connection_config.ssl_client_key.clone(),
+            &logger_arc,
+        )
+        .await?;
+
+        let discovered_schemas = schema::discover_all_user_schemas(&discovery_client)
+            .await
+            .context("Failed to discover schemas")?;
+
+        if discovered_schemas.is_empty() {
+            return Err(anyhow::anyhow!(
+                "No user schemas found in the database. System schemas are excluded."
+            ));
+        }
+
+        logger_arc.log(
+            logging::LogLevel::Success,
+            &format!(
+                "Discovered {} schema(s): {}",
+                discovered_schemas.len(),
+                discovered_schemas.join(", ")
+            ),
+        );
+
+        discovered_schemas
+    } else {
+        // Use provided schemas
+        parsed_schemas
+    };
+
+    // Deduplicate schemas and warn if duplicates were found
+    let mut seen_schemas: HashSet<String> = HashSet::new();
+    let mut duplicate_count = 0;
+    let mut deduplicated_schemas: Vec<String> = Vec::new();
+    
+    for schema in schemas {
+        if seen_schemas.contains(&schema) {
+            duplicate_count += 1;
+        } else {
+            seen_schemas.insert(schema.clone());
+            deduplicated_schemas.push(schema);
+        }
+    }
+    
+    if duplicate_count > 0 {
+        logger_arc.log(
+            logging::LogLevel::Warning,
+            &format!(
+                "Found {} duplicate schema name(s) in the provided list. Duplicates have been removed.",
+                duplicate_count
+            ),
+        );
+    }
+
+    let schemas = deduplicated_schemas;
+    
+    // Print startup message (always visible, even in silence mode)
+    if args.silence_mode {
+        println!("Starting PostgreSQL reindexer (silence mode enabled - logs are being written to {})", args.log_file);
+    }
+
+    // Connect to PostgreSQL with SSL support for main work
+    // (discovery_client from schema discovery is dropped here)
     if args.ssl {
         logger_arc.log(
             logging::LogLevel::Info,
@@ -342,7 +396,6 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Connect to PostgreSQL with SSL support
     let client = create_connection_ssl(
         &connection_string,
         connection_config.ssl,
@@ -446,7 +499,7 @@ async fn main() -> Result<()> {
             args.resume,
             &schemas,
             || async {
-                crate::index_operations::get_indexes_in_schemas(
+                pg_reindexer::index_operations::get_indexes_in_schemas(
                     &client,
                     &schemas,
                     args.table.as_deref(),
@@ -466,7 +519,7 @@ async fn main() -> Result<()> {
             &schemas,
             args.table.as_deref(),
             || async {
-                crate::index_operations::get_indexes_in_schemas(
+                pg_reindexer::index_operations::get_indexes_in_schemas(
                     &client,
                     &schemas,
                     args.table.as_deref(),
