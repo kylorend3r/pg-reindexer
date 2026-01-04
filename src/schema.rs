@@ -128,3 +128,19 @@ pub async fn table_exists(client: &Client, schema_name: &str, table_name: &str) 
         Ok(false)
     }
 }
+
+/// Discover all user schemas in the database (excluding system schemas)
+pub async fn discover_all_user_schemas(client: &Client) -> Result<Vec<String>> {
+    let rows = client
+        .query(crate::queries::GET_ALL_USER_SCHEMAS, &[])
+        .await
+        .context("Failed to discover user schemas")?;
+
+    let mut schemas = Vec::new();
+    for row in rows {
+        let schema_name: String = row.get(0);
+        schemas.push(schema_name);
+    }
+
+    Ok(schemas)
+}

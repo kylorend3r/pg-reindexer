@@ -178,3 +178,13 @@ pub const CHECK_TABLE_EXISTS: &str = r#"
         AND c.relkind = 'r'
     );
 "#;
+
+// Get all user schemas (excluding system schemas and tool-managed schemas)
+pub const GET_ALL_USER_SCHEMAS: &str = r#"
+    SELECT nspname 
+    FROM pg_namespace 
+    WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'pg_temp_1', 'pg_toast_temp_1', 'reindexer')
+    AND nspname NOT LIKE 'pg_temp_%'
+    AND nspname NOT LIKE 'pg_toast_temp_%'
+    ORDER BY nspname;
+"#;
