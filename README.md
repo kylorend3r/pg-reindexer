@@ -51,6 +51,9 @@ pg-reindexer --schema public
 # Reindex indexes from multiple schemas (comma-separated, max 512)
 pg-reindexer --schema public,app_schema,analytics_schema
 
+# Discover all schemas in the database and reindex indexes in all of them
+pg-reindexer --discover-all-schemas
+
 # Reindex indexes for a specific table
 pg-reindexer --schema public --table users
 
@@ -89,6 +92,12 @@ pg-reindexer --schema public --dry-run
 
 # Reindex indexes from multiple schemas
 pg-reindexer --schema public,app_schema,analytics_schema
+
+# Discover all schemas and reindex indexes in all discovered schemas
+pg-reindexer --discover-all-schemas
+
+# Discover all schemas with specific index type filtering
+pg-reindexer --discover-all-schemas --index-type btree
 
 # Reindex only b-tree indexes
 pg-reindexer --schema public --index-type btree
@@ -192,6 +201,24 @@ pg-reindexer --schema public --reindex-only-bloated 15
 pg-reindexer --schema public,app_schema,analytics_schema --reindex-only-bloated 15
 ```
 
+### 🔍 **Automatic Schema Discovery**
+
+```bash
+# Discover all user schemas and reindex indexes in all of them
+pg-reindexer --discover-all-schemas
+
+# Discover all schemas with dry-run to see what would be reindexed
+pg-reindexer --discover-all-schemas --dry-run
+
+# Discover all schemas with specific filters
+pg-reindexer --discover-all-schemas --index-type btree --min-size-gb 1
+
+# Discover all schemas and resume from previous session
+pg-reindexer --discover-all-schemas --resume
+```
+
+**Note**: The `--discover-all-schemas` option automatically discovers all user schemas in the database, excluding system schemas (pg_catalog, information_schema, pg_toast, etc.) and the tool-managed `reindexer` schema. This is useful for comprehensive database maintenance when you want to reindex indexes across all user schemas without manually specifying each one.
+
 ### 🔄 **Resume Interrupted Sessions**
 
 ```bash
@@ -294,6 +321,9 @@ pg-reindexer --schema public --host prod-db.company.com --ssl --threads 2 --main
 
 # Multiple schemas with SSL connection
 pg-reindexer --schema public,app_schema --host prod-db.company.com --ssl --threads 4 --maintenance-work-mem-gb 2
+
+# Discover all schemas and reindex during maintenance window
+pg-reindexer --discover-all-schemas --threads 8 --maintenance-work-mem-gb 4
 ```
 
 
@@ -345,9 +375,9 @@ pg-reindexer --schema public --ssl --ssl-self-signed
 ```bash
 PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table
 
-Usage: pg-reindexer [OPTIONS] --schema <SCHEMA>
+Usage: pg-reindexer [OPTIONS] [--schema <SCHEMA> | --discover-all-schemas]
 
-Note: The --schema parameter accepts a single schema name or a comma-separated list of schema names (maximum 512 schemas).
+Note: Either --schema or --discover-all-schemas must be provided. The --schema parameter accepts a single schema name or a comma-separated list of schema names (maximum 512 schemas). The --discover-all-schemas option automatically discovers all user schemas in the database (excluding system schemas like pg_catalog, information_schema, etc.).
 
 Options:
   -H, --host <HOST>                                    PostgreSQL host (can also be set via PG_HOST environment variable)
@@ -355,7 +385,8 @@ Options:
   -d, --database <DATABASE>                             Database name (can also be set via PG_DATABASE environment variable)
   -U, --username <USERNAME>                             Username (can also be set via PG_USER environment variable)
   -P, --password <PASSWORD>                             Password (can also be set via PG_PASSWORD environment variable)
-  -s, --schema <SCHEMA>                                 Schema name(s) to reindex (required). Can be a single schema or comma-separated list (max 512 schemas)
+  -s, --schema <SCHEMA>                                 Schema name(s) to reindex. Can be a single schema or comma-separated list (max 512 schemas). Not required if --discover-all-schemas is used.
+      --discover-all-schemas                             Discover all user schemas in the database and collect indexes for all discovered schemas. System schemas (pg_catalog, information_schema, etc.) are excluded.
   -t, --table <TABLE>                                   Table name to reindex (optional - if not provided, reindexes all indexes in schema)
   -f, --dry-run                                         Dry run - show what would be reindexed without actually doing it
   -n, --threads <THREADS>                               Number of concurrent threads for reindexing (default: 2, max: 32) [default: 2]
@@ -389,6 +420,7 @@ Options:
 
 ### 🎯 **Granular Maintenance Control**
 - **Schema-level Reindexing**: Reindex all indexes in a specific schema for comprehensive maintenance
+- **Automatic Schema Discovery**: Automatically discover all user schemas in the database and reindex indexes across all of them with `--discover-all-schemas`
 - **Multiple Schema Support**: Reindex indexes across multiple schemas in a single operation (comma-separated list, max 512 schemas)
 - **Table-level Reindexing**: Target specific tables for focused maintenance cycles
 - **Index Type Filtering**: Choose between regular b-tree indexes or primary keys/unique constraints
