@@ -1,23 +1,9 @@
-use crate::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
-use crate::types::IndexFilterType;
+use pg_reindexer::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
+use pg_reindexer::types::IndexFilterType;
+use pg_reindexer::{logging, memory_table, orchestrator, queries, schema, state, validation};
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::{collections::HashSet, sync::Arc};
-
-mod checks;
-mod config;
-mod connection;
-mod credentials;
-mod index_operations;
-mod logging;
-mod memory_table;
-mod orchestrator;
-mod queries;
-mod save;
-mod schema;
-mod state;
-mod types;
-mod validation;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
@@ -513,7 +499,7 @@ async fn main() -> Result<()> {
             args.resume,
             &schemas,
             || async {
-                crate::index_operations::get_indexes_in_schemas(
+                pg_reindexer::index_operations::get_indexes_in_schemas(
                     &client,
                     &schemas,
                     args.table.as_deref(),
@@ -533,7 +519,7 @@ async fn main() -> Result<()> {
             &schemas,
             args.table.as_deref(),
             || async {
-                crate::index_operations::get_indexes_in_schemas(
+                pg_reindexer::index_operations::get_indexes_in_schemas(
                     &client,
                     &schemas,
                     args.table.as_deref(),

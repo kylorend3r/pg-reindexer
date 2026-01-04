@@ -336,3 +336,50 @@ fn test_clean_orphaned_indexes_flag() {
         .code(predicate::ne(2));
 }
 
+#[test]
+fn test_discover_all_schemas_flag() {
+    let mut cmd = get_cmd();
+    // Should parse --discover-all-schemas flag correctly
+    // Will fail at DB connection, but should not fail at argument parsing
+    cmd.arg("--discover-all-schemas")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_discover_all_schemas_with_other_flags() {
+    let mut cmd = get_cmd();
+    // Should parse --discover-all-schemas with other flags
+    cmd.arg("--discover-all-schemas")
+        .arg("--dry-run")
+        .arg("--index-type")
+        .arg("btree")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_discover_all_schemas_without_schema() {
+    let mut cmd = get_cmd();
+    // Should work without --schema when --discover-all-schemas is provided
+    cmd.arg("--discover-all-schemas")
+        .arg("--dry-run")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_help_contains_discover_all_schemas() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--discover-all-schemas"));
+}
+
