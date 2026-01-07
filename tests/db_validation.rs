@@ -20,6 +20,14 @@ fn get_db_config() -> (String, u16, String, String, String) {
         .parse::<u16>()
         .unwrap_or(5432);
     let database = std::env::var("PG_DATABASE").unwrap_or_else(|_| "postgres".to_string());
+    // For database validation tests, if multiple databases are specified (comma-separated),
+    // use only the first one since these tests work with a single database
+    let database = database
+        .split(',')
+        .next()
+        .unwrap_or("postgres")
+        .trim()
+        .to_string();
     let user = std::env::var("PG_USER").unwrap_or_else(|_| "postgres".to_string());
     let password = std::env::var("PG_PASSWORD")
         .expect("PG_PASSWORD environment variable must be set for database tests");

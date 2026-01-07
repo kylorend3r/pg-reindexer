@@ -16,8 +16,8 @@ struct Args {
     #[arg(short, long, help = "Port to connect to PostgreSQL")]
     port: Option<u16>,
 
-    /// Database name (can also be set via PG_DATABASE environment variable)
-    #[arg(short, long, help = "Database name to connect to")]
+    /// Database name(s) to connect to. Can be a single database or comma-separated list of databases (can also be set via PG_DATABASE environment variable)
+    #[arg(short, long, help = "Database name(s) to connect to. Can be a single database or comma-separated list of databases")]
     database: Option<String>,
 
     /// Username (can also be set via PG_USER environment variable)
@@ -259,6 +259,37 @@ async fn main() -> Result<()> {
         eprintln!("Warning: Both --schema and --discover-all-schemas are provided. --schema will be used and --discover-all-schemas will be ignored.");
     }
 
+    // Parse databases - support comma-separated list
+    let databases: Vec<String> = if let Some(db_str) = &args.database {
+        db_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        // Fall back to environment variable or default
+        let default_db = ConnectionConfig::from_args(
+            args.host.clone(),
+            args.port,
+            args.database.clone(),
+            args.username.clone(),
+            args.password.clone(),
+            args.ssl,
+            args.ssl_self_signed,
+            args.ssl_ca_cert.clone(),
+            args.ssl_client_cert.clone(),
+            args.ssl_client_key.clone(),
+        )?
+        .database;
+        vec![default_db]
+    };
+
+    if databases.is_empty() {
+        return Err(anyhow::anyhow!(
+            "At least one database must be provided via --database argument or PG_DATABASE environment variable"
+        ));
+    }
+
     // Parse schemas - will be discovered later if discover_all_schemas is enabled
     let parsed_schemas: Vec<String> = if let Some(schema_str) = &args.schema {
         schema_str
@@ -291,11 +322,81 @@ async fn main() -> Result<()> {
     let logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
     let logger_arc = Arc::new(logger);
 
-    // Build connection configuration from arguments (needed early for schema discovery)
+    // Print startup message (always visible, even in silence mode)
+    if args.silence_mode {
+        println!("Starting PostgreSQL reindexer (silence mode enabled - logs are being written to {})", args.log_file);
+    }
+
+    // Process each database
+    let total_databases = databases.len();
+    for (db_index, database_name) in databases.iter().enumerate() {
+        if total_databases > 1 {
+            logger_arc.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "Processing database {}/{}: {}",
+                    db_index + 1,
+                    total_databases,
+                    database_name
+                ),
+            );
+        }
+
+        // Process this database
+        if let Err(e) = process_database(
+            database_name.clone(),
+            &args,
+            &parsed_schemas,
+            logger_arc.clone(),
+        )
+        .await
+        {
+            logger_arc.log(
+                logging::LogLevel::Error,
+                &format!("Failed to process database '{}': {}", database_name, e),
+            );
+            // Continue with next database instead of failing completely
+            if total_databases > 1 {
+                logger_arc.log(
+                    logging::LogLevel::Warning,
+                    &format!("Continuing with next database..."),
+                );
+                continue;
+            } else {
+                return Err(e);
+            }
+        }
+
+        if total_databases > 1 {
+            logger_arc.log(
+                logging::LogLevel::Success,
+                &format!("Completed processing database: {}", database_name),
+            );
+        }
+    }
+
+    if total_databases > 1 {
+        logger_arc.log(
+            logging::LogLevel::Success,
+            &format!("Completed processing all {} database(s)", total_databases),
+        );
+    }
+
+    Ok(())
+}
+
+/// Process reindexing for a single database
+async fn process_database(
+    database_name: String,
+    args: &Args,
+    parsed_schemas: &[String],
+    logger_arc: Arc<logging::Logger>,
+) -> Result<()> {
+    // Build connection configuration for this specific database
     let connection_config = ConnectionConfig::from_args(
         args.host.clone(),
         args.port,
-        args.database.clone(),
+        Some(database_name.clone()),
         args.username.clone(),
         args.password.clone(),
         args.ssl,
@@ -311,7 +412,7 @@ async fn main() -> Result<()> {
     let schemas: Vec<String> = if args.discover_all_schemas && args.schema.is_none() {
         logger_arc.log(
             logging::LogLevel::Info,
-            "Discovering all user schemas in the database...",
+            &format!("Discovering all user schemas in database '{}'...", database_name),
         );
 
         // Connect to PostgreSQL for schema discovery
@@ -332,15 +433,17 @@ async fn main() -> Result<()> {
 
         if discovered_schemas.is_empty() {
             return Err(anyhow::anyhow!(
-                "No user schemas found in the database. System schemas are excluded."
+                "No user schemas found in database '{}'. System schemas are excluded.",
+                database_name
             ));
         }
 
         logger_arc.log(
             logging::LogLevel::Success,
             &format!(
-                "Discovered {} schema(s): {}",
+                "Discovered {} schema(s) in database '{}': {}",
                 discovered_schemas.len(),
+                database_name,
                 discovered_schemas.join(", ")
             ),
         );
@@ -348,7 +451,7 @@ async fn main() -> Result<()> {
         discovered_schemas
     } else {
         // Use provided schemas
-        parsed_schemas
+        parsed_schemas.to_vec()
     };
 
     // Deduplicate schemas and warn if duplicates were found
@@ -376,23 +479,18 @@ async fn main() -> Result<()> {
     }
 
     let schemas = deduplicated_schemas;
-    
-    // Print startup message (always visible, even in silence mode)
-    if args.silence_mode {
-        println!("Starting PostgreSQL reindexer (silence mode enabled - logs are being written to {})", args.log_file);
-    }
 
     // Connect to PostgreSQL with SSL support for main work
     // (discovery_client from schema discovery is dropped here)
     if args.ssl {
         logger_arc.log(
             logging::LogLevel::Info,
-            &format!("Connecting to PostgreSQL at {}:{} with SSL", connection_config.host, connection_config.port),
+            &format!("Connecting to database '{}' at {}:{} with SSL", database_name, connection_config.host, connection_config.port),
         );
     } else {
         logger_arc.log(
             logging::LogLevel::Info,
-            &format!("Connecting to PostgreSQL at {}:{}", connection_config.host, connection_config.port),
+            &format!("Connecting to database '{}' at {}:{}", database_name, connection_config.host, connection_config.port),
         );
     }
 
@@ -409,7 +507,7 @@ async fn main() -> Result<()> {
 
     logger_arc.log(
         logging::LogLevel::Success,
-        "Successfully connected to PostgreSQL",
+        &format!("Successfully connected to database '{}'", database_name),
     );
 
     // Validate thread count and parallel worker settings
