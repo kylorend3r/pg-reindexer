@@ -43,46 +43,46 @@ chmod +x pg-reindexer-x86_64-unknown-linux-gnu
 
 ```bash
 # See what would be reindexed (always test first!)
-pg-reindexer --schema public --dry-run
+pg-reindexer --database mydb --schema public --dry-run
 
 # Reindex all indexes in a schema
-pg-reindexer --schema public
+pg-reindexer --database mydb --schema public
 
 # Reindex indexes from multiple schemas (comma-separated, max 512)
-pg-reindexer --schema public,app_schema,analytics_schema
+pg-reindexer --database mydb --schema public,app_schema,analytics_schema
 
 # Reindex indexes across multiple databases
 pg-reindexer --database db1,db2,db3 --schema public
 
 # Discover all schemas in the database and reindex indexes in all of them
-pg-reindexer --discover-all-schemas
+pg-reindexer --database mydb --discover-all-schemas
 
 # Reindex indexes for a specific table
-pg-reindexer --schema public --table users
+pg-reindexer --database mydb --schema public --table users
 
 # Reindex only regular b-tree indexes (default)
-pg-reindexer --schema public --index-type btree
+pg-reindexer --database mydb --schema public --index-type btree
 
 # Reindex only primary keys and unique constraints
-pg-reindexer --schema public --index-type constraint
+pg-reindexer --database mydb --schema public --index-type constraint
 
 # Exclude specific indexes from reindexing
-pg-reindexer --schema public --exclude-indexes "idx_users_email,idx_orders_created_at"
+pg-reindexer --database mydb --schema public --exclude-indexes "idx_users_email,idx_orders_created_at"
 
 # Resume from a previous interrupted reindexing session
-pg-reindexer --schema public --resume
+pg-reindexer --database mydb --schema public --resume
 
 # Silence mode - only log to file, minimal terminal output
-pg-reindexer --schema public --silence-mode
+pg-reindexer --database mydb --schema public --silence-mode
 
 # High-performance reindexing
-pg-reindexer --schema public --threads 8
+pg-reindexer --database mydb --schema public --threads 8
 
 # SSL connection to remote PostgreSQL server
-pg-reindexer --schema public --host your-postgres-server.com --ssl
+pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl
 
 # SSL connection with invalid certificate acceptance (testing only)
-pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-self-signed
+pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl --ssl-self-signed
 ```
 
 ## Usage Examples
@@ -91,10 +91,10 @@ pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-self-si
 
 ```bash
 # Dry run (always test first!)
-pg-reindexer --schema public --dry-run
+pg-reindexer --database mydb --schema public --dry-run
 
 # Reindex indexes from multiple schemas
-pg-reindexer --schema public,app_schema,analytics_schema
+pg-reindexer --database mydb --schema public,app_schema,analytics_schema
 
 # Reindex indexes across multiple databases
 pg-reindexer --database db1,db2,db3 --schema public
@@ -103,28 +103,28 @@ pg-reindexer --database db1,db2,db3 --schema public
 pg-reindexer --database db1,db2 --schema public,app_schema
 
 # Discover all schemas and reindex indexes in all discovered schemas
-pg-reindexer --discover-all-schemas
+pg-reindexer --database mydb --discover-all-schemas
 
 # Discover all schemas across multiple databases
 pg-reindexer --database db1,db2 --discover-all-schemas
 
 # Discover all schemas with specific index type filtering
-pg-reindexer --discover-all-schemas --index-type btree
+pg-reindexer --database mydb --discover-all-schemas --index-type btree
 
 # Reindex only b-tree indexes
-pg-reindexer --schema public --index-type btree
+pg-reindexer --database mydb --schema public --index-type btree
 
 # Reindex only constraints
-pg-reindexer --schema public --index-type constraint
+pg-reindexer --database mydb --schema public --index-type constraint
 
 # Reindex constraints from multiple schemas
-pg-reindexer --schema public,app_schema --index-type constraint
+pg-reindexer --database mydb --schema public,app_schema --index-type constraint
 
 # Reindex constraints across multiple databases
 pg-reindexer --database db1,db2 --schema public --index-type constraint
 
 # Specific table reindexing
-pg-reindexer --schema public --table users
+pg-reindexer --database mydb --schema public --table users
 
 # Specific table reindexing across multiple databases
 pg-reindexer --database db1,db2 --schema public --table users
@@ -134,51 +134,51 @@ pg-reindexer --database db1,db2 --schema public --table users
 
 ```bash
 # Production safe (1 thread)
-pg-reindexer --schema public --threads 1 
+pg-reindexer --database mydb --schema public --threads 1 
 
 # High performance (8 threads)
-pg-reindexer --schema public --threads 8 
+pg-reindexer --database mydb --schema public --threads 8 
 
 # Maximum threads (32)
-pg-reindexer --schema public --threads 32 
+pg-reindexer --database mydb --schema public --threads 32 
 ```
 
 ### 💾 **Memory and Performance Settings**
 
 ```bash
 # Conservative settings
-pg-reindexer --schema public --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1
+pg-reindexer --database mydb --schema public --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1
 
 # High performance settings
-pg-reindexer --schema public --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4
+pg-reindexer --database mydb --schema public --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4
 
 # Use PostgreSQL defaults
-pg-reindexer --schema public --max-parallel-maintenance-workers 0
+pg-reindexer --database mydb --schema public --max-parallel-maintenance-workers 0
 
 # High IO concurrency
-pg-reindexer --schema public --maintenance-io-concurrency 256
+pg-reindexer --database mydb --schema public --maintenance-io-concurrency 256
 
 # Set lock timeout to 30 seconds
-pg-reindexer --schema public --lock-timeout-seconds 30
+pg-reindexer --database mydb --schema public --lock-timeout-seconds 30
 
 # Disable lock timeout (default)
-pg-reindexer --schema public --lock-timeout-seconds 0
+pg-reindexer --database mydb --schema public --lock-timeout-seconds 0
 ```
 
 ### 📊 **Size Filtering**
 
 ```bash
 # Only medium indexes (max 10GB)
-pg-reindexer --schema public --max-size-gb 10
+pg-reindexer --database mydb --schema public --max-size-gb 10
 
 # Large indexes only (min 100GB)
-pg-reindexer --schema public --min-size-gb 100
+pg-reindexer --database mydb --schema public --min-size-gb 100
 
 # Size range filtering (1GB to 50GB)
-pg-reindexer --schema public --min-size-gb 1 --max-size-gb 50
+pg-reindexer --database mydb --schema public --min-size-gb 1 --max-size-gb 50
 
 # Size filtering across multiple schemas
-pg-reindexer --schema public,app_schema --min-size-gb 1 --max-size-gb 50
+pg-reindexer --database mydb --schema public,app_schema --min-size-gb 1 --max-size-gb 50
 ```
 
 **Note**: The tool will log the index size limits being applied for clarity:
@@ -190,19 +190,19 @@ Index size limits: minimum 1 GB, maximum 50 GB
 
 ```bash
 # Reindex only regular b-tree indexes (default)
-pg-reindexer --schema public --index-type btree
+pg-reindexer --database mydb --schema public --index-type btree
 
 # Reindex only primary keys and unique constraints
-pg-reindexer --schema public --index-type constraint
+pg-reindexer --database mydb --schema public --index-type constraint
 
 # Reindex b-tree indexes from multiple schemas
-pg-reindexer --schema public,app_schema --index-type btree
+pg-reindexer --database mydb --schema public,app_schema --index-type btree
 
 # Combine with size filtering
-pg-reindexer --schema public --index-type constraint --min-size-gb 1 --max-size-gb 10
+pg-reindexer --database mydb --schema public --index-type constraint --min-size-gb 1 --max-size-gb 10
 
 # Combine with table filtering
-pg-reindexer --schema public --table users --index-type btree
+pg-reindexer --database mydb --schema public --table users --index-type btree
 ```
 
 **Index Type Options**:
@@ -213,26 +213,26 @@ pg-reindexer --schema public --table users --index-type btree
 
 ```bash
 # Only reindex indexes with bloat ratio >= 15%
-pg-reindexer --schema public --reindex-only-bloated 15
+pg-reindexer --database mydb --schema public --reindex-only-bloated 15
 
 # Bloat-based reindexing across multiple schemas
-pg-reindexer --schema public,app_schema,analytics_schema --reindex-only-bloated 15
+pg-reindexer --database mydb --schema public,app_schema,analytics_schema --reindex-only-bloated 15
 ```
 
 ### 🔍 **Automatic Schema Discovery**
 
 ```bash
 # Discover all user schemas and reindex indexes in all of them
-pg-reindexer --discover-all-schemas
+pg-reindexer --database mydb --discover-all-schemas
 
 # Discover all schemas with dry-run to see what would be reindexed
-pg-reindexer --discover-all-schemas --dry-run
+pg-reindexer --database mydb --discover-all-schemas --dry-run
 
 # Discover all schemas with specific filters
-pg-reindexer --discover-all-schemas --index-type btree --min-size-gb 1
+pg-reindexer --database mydb --discover-all-schemas --index-type btree --min-size-gb 1
 
 # Discover all schemas and resume from previous session
-pg-reindexer --discover-all-schemas --resume
+pg-reindexer --database mydb --discover-all-schemas --resume
 ```
 
 **Note**: The `--discover-all-schemas` option automatically discovers all user schemas in the database, excluding system schemas (pg_catalog, information_schema, pg_toast, etc.) and the tool-managed `reindexer` schema. This is useful for comprehensive database maintenance when you want to reindex indexes across all user schemas without manually specifying each one.
@@ -284,16 +284,16 @@ pg-reindexer --database db3,db4 --schema public  # Uses db3,db4
 
 ```bash
 # Resume reindexing from a previous interrupted session
-pg-reindexer --schema public --resume
+pg-reindexer --database mydb --schema public --resume
 
 # Resume with same performance settings as original run
-pg-reindexer --schema public --resume --threads 8 --maintenance-work-mem-gb 4
+pg-reindexer --database mydb --schema public --resume --threads 8 --maintenance-work-mem-gb 4
 
 # Resume and clean orphaned indexes
-pg-reindexer --schema public --resume --clean-orphaned-indexes
+pg-reindexer --database mydb --schema public --resume --clean-orphaned-indexes
 
 # Resume for multiple schemas
-pg-reindexer --schema public,app_schema,analytics_schema --resume
+pg-reindexer --database mydb --schema public,app_schema,analytics_schema --resume
 ```
 
 **Note**: The `--resume` option will continue processing indexes that were pending, failed, or in progress from a previous session. Completed indexes are preserved and will not be reindexed again.
@@ -302,13 +302,13 @@ pg-reindexer --schema public,app_schema,analytics_schema --resume
 
 ```bash
 # Run in silence mode - only startup and completion messages to terminal
-pg-reindexer --schema public --silence-mode
+pg-reindexer --database mydb --schema public --silence-mode
 
 # Silence mode with other options
-pg-reindexer --schema public --silence-mode --threads 8 --maintenance-work-mem-gb 4
+pg-reindexer --database mydb --schema public --silence-mode --threads 8 --maintenance-work-mem-gb 4
 
 # Resume with silence mode
-pg-reindexer --schema public --resume --silence-mode
+pg-reindexer --database mydb --schema public --resume --silence-mode
 ```
 
 **Note**: In silence mode, all detailed logs are written to the log file but not printed to the terminal. Only the startup message and final completion summary are displayed. This is useful for automated scripts or when running in background processes.
@@ -317,34 +317,34 @@ pg-reindexer --schema public --resume --silence-mode
 
 ```bash
 # Clean up orphaned _ccnew indexes before reindexing
-pg-reindexer --schema public --clean-orphaned-indexes
+pg-reindexer --database mydb --schema public --clean-orphaned-indexes
 
 # Combine with other operations
-pg-reindexer --schema public --clean-orphaned-indexes --threads 4 --maintenance-work-mem-gb 2
+pg-reindexer --database mydb --schema public --clean-orphaned-indexes --threads 4 --maintenance-work-mem-gb 2
 ```
 
 ### 🔒 **SSL/TLS Connections**
 
 ```bash
 # Secure connection to remote PostgreSQL server
-pg-reindexer --schema public --host your-postgres-server.com --port 5432 --ssl
+pg-reindexer --database mydb --schema public --host your-postgres-server.com --port 5432 --ssl
 
 # SSL connection with custom credentials
-pg-reindexer --schema public --host your-postgres-server.com --username myuser --password mypass --ssl
+pg-reindexer --database mydb --schema public --host your-postgres-server.com --username myuser --password mypass --ssl
 
 # SSL connection for testing (allows self-signed certificates)
-pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-self-signed
+pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl --ssl-self-signed
 
 # SSL connection with custom CA certificate
-pg-reindexer --schema public --host your-postgres-server.com --ssl --ssl-ca-cert /path/to/ca-cert.pem
+pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl --ssl-ca-cert /path/to/ca-cert.pem
 
 # SSL connection with client certificate authentication
-pg-reindexer --schema public --host your-postgres-server.com --ssl \
+pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl \
   --ssl-client-cert /path/to/client-cert.pem \
   --ssl-client-key /path/to/client-key.pem
 
 # SSL connection with both CA and client certificates
-pg-reindexer --schema public --host your-postgres-server.com --ssl \
+pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl \
   --ssl-ca-cert /path/to/ca-cert.pem \
   --ssl-client-cert /path/to/client-cert.pem \
   --ssl-client-key /path/to/client-key.pem
@@ -353,44 +353,44 @@ pg-reindexer --schema public --host your-postgres-server.com --ssl \
 export PG_HOST=your-postgres-server.com
 export PG_USER=myuser
 export PG_PASSWORD=mypass
-pg-reindexer --schema public --ssl
+pg-reindexer --database mydb --schema public --ssl
 
 # Local connection without SSL (default)
-pg-reindexer --schema public --host localhost
+pg-reindexer --database mydb --schema public --host localhost
 ```
 
 ### 🛡️ **Production Scenarios**
 
 ```bash
 # Production hours (minimal impact)
-pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1
+pg-reindexer --database mydb --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1
 
 # Maintenance window (high performance)
-pg-reindexer --schema public --threads 8 --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4 --maintenance-io-concurrency 256
+pg-reindexer --database mydb --schema public --threads 8 --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4 --maintenance-io-concurrency 256
 
 # Reindex multiple schemas during maintenance window
-pg-reindexer --schema public,app_schema,analytics_schema --threads 8 --maintenance-work-mem-gb 4
+pg-reindexer --database mydb --schema public,app_schema,analytics_schema --threads 8 --maintenance-work-mem-gb 4
 
 # Reindex multiple databases during maintenance window
 pg-reindexer --database db1,db2,db3 --schema public --threads 8 --maintenance-work-mem-gb 4
 
 # Emergency operation (maximum safety)
-pg-reindexer --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1 --skip-inactive-replication-slots --skip-sync-replication-connection --skip-active-vacuums
+pg-reindexer --database mydb --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1 --skip-inactive-replication-slots --skip-sync-replication-connection --skip-active-vacuums
 
 # Production with lock timeout protection
-pg-reindexer --schema public --threads 2 --maintenance-work-mem-gb 2 --max-parallel-maintenance-workers 2 --lock-timeout-seconds 60
+pg-reindexer --database mydb --schema public --threads 2 --maintenance-work-mem-gb 2 --max-parallel-maintenance-workers 2 --lock-timeout-seconds 60
 
 # Production with SSL connection
-pg-reindexer --schema public --host prod-db.company.com --ssl --threads 2 --maintenance-work-mem-gb 2
+pg-reindexer --database mydb --schema public --host prod-db.company.com --ssl --threads 2 --maintenance-work-mem-gb 2
 
 # Multiple schemas with SSL connection
-pg-reindexer --schema public,app_schema --host prod-db.company.com --ssl --threads 4 --maintenance-work-mem-gb 2
+pg-reindexer --database mydb --schema public,app_schema --host prod-db.company.com --ssl --threads 4 --maintenance-work-mem-gb 2
 
 # Multiple databases with SSL connection
 pg-reindexer --database db1,db2 --host prod-db.company.com --ssl --threads 4 --maintenance-work-mem-gb 2
 
 # Discover all schemas and reindex during maintenance window
-pg-reindexer --discover-all-schemas --threads 8 --maintenance-work-mem-gb 4
+pg-reindexer --database mydb --discover-all-schemas --threads 8 --maintenance-work-mem-gb 4
 
 # Discover all schemas across multiple databases during maintenance window
 pg-reindexer --database db1,db2 --discover-all-schemas --threads 8 --maintenance-work-mem-gb 4
@@ -407,11 +407,11 @@ export PG_DATABASE=postgres
 export PG_USER=postgres
 export PG_PASSWORD=mypassword
 
-# Then run without connection parameters
-pg-reindexer --schema public
+# Then run without connection parameters (uses PG_DATABASE from environment)
+pg-reindexer --database mydb --schema public
 
 # Multiple schemas with environment variables
-pg-reindexer --schema public,app_schema,analytics_schema 
+pg-reindexer --database mydb --schema public,app_schema,analytics_schema 
 
 # Multiple databases via environment variable (comma-separated)
 export PG_DATABASE=db1,db2,db3
@@ -425,7 +425,7 @@ pg-reindexer --database db3,db4 --schema public  # Uses db3,db4 (not db1,db2)
 export PG_HOST=your-postgres-server.com
 export PG_USER=myuser
 export PG_PASSWORD=mypass
-pg-reindexer --schema public --ssl
+pg-reindexer --database mydb --schema public --ssl
 
 # Multiple databases with SSL connection
 export PG_DATABASE=db1,db2
