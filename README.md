@@ -16,6 +16,7 @@ A high-performance, production-ready PostgreSQL index maintenance tool written i
   - [Thread Count Variations](#-thread-count-variations)
   - [Memory and Performance Settings](#-memory-and-performance-settings)
   - [Size Filtering](#-size-filtering)
+  - [Size-based Ordering](#-size-based-ordering)
   - [Production Scenarios](#-production-scenarios)
 - [Environment Variables](#environment-variables)
 - [Command Line Interface](#command-line-interface)
@@ -77,6 +78,12 @@ pg-reindexer --database mydb --schema public --silence-mode
 
 # High-performance reindexing
 pg-reindexer --database mydb --schema public --threads 8
+
+# Order indexes by size (smallest first)
+pg-reindexer --database mydb --schema public --order-by-size asc
+
+# Order indexes by size (largest first)
+pg-reindexer --database mydb --schema public --order-by-size desc
 
 # SSL connection to remote PostgreSQL server
 pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl
@@ -477,6 +484,7 @@ Options:
       --skip-active-vacuums                              Skip active vacuum check
   -m, --max-size-gb <MAX_SIZE_GB>                      Maximum index size in GB. Indexes larger than this will be excluded from reindexing [default: 1024]
       --min-size-gb <MIN_SIZE_GB>                      Minimum index size in GB. Indexes smaller than this will be excluded from reindexing [default: 0]
+      --order-by-size <ORDER>                          Order indexes by size: 'asc' for smallest first, 'desc' for largest first. If not specified, indexes are ordered ascending by default.
       --index-type <INDEX_TYPE>                        Index type to reindex: 'btree' for regular b-tree indexes, 'constraint' for primary keys and unique constraints [default: btree]
   -w, --maintenance-work-mem-gb <MAINTENANCE_WORK_MEM_GB>  Maximum maintenance work mem in GB (max: 32 GB) [default: 1]
   -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2) [default: 2]
@@ -508,6 +516,7 @@ Options:
 - **Table-level Reindexing**: Target specific tables for focused maintenance cycles
 - **Index Type Filtering**: Choose between regular b-tree indexes or primary keys/unique constraints
 - **Index Exclusion**: Exclude specific indexes from reindexing using comma-separated lists
+- **Size-based Ordering**: Control the order in which indexes are processed by their size (ascending or descending)
 - **Flexible Scheduling**: Create different maintenance strategies for different schemas/tables/databases
 - **B-tree Focus**: Optimized for the most common index type in PostgreSQL
 - **Constraint Awareness**: Target primary keys and unique constraints separately from regular indexes
@@ -531,6 +540,13 @@ Options:
 - **Threshold-Based Filtering**: Only reindex indexes that exceed the specified bloat threshold
 - **Efficient Maintenance**: Focus resources on indexes that actually need reindexing
 - **Configurable Sensitivity**: Set bloat threshold from 0-100% to match your maintenance strategy
+
+### 📊 **Size-based Index Ordering**
+- **Flexible Ordering**: Order indexes by size in ascending (smallest first) or descending (largest first) order
+- **Efficient Processing**: Process smaller indexes first to free up resources, or target large indexes for priority maintenance
+- **SQL-level Sorting**: Sorting is performed at the database level for optimal performance
+- **Size Tracking**: Index size information is stored with each index for efficient processing and reporting
+- **Default Behavior**: Indexes are ordered ascending by size by default if no ordering is specified
 
 ### 🔄 **Resume Functionality**
 - **Interrupted Session Recovery**: Resume reindexing from where it left off after an interruption or crash
