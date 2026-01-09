@@ -631,6 +631,7 @@ async fn test_discover_all_schemas_finds_indexes() -> Result<()> {
         0,
         1024,
         pg_reindexer::types::IndexFilterType::All,
+        None, // No ordering specified
     )
     .await?;
 
@@ -666,6 +667,279 @@ async fn test_discover_all_schemas_excludes_reindexer_schema() -> Result<()> {
         !discovered_schemas.contains(&"reindexer".to_string()),
         "Discovered schemas should NOT include the reindexer schema"
     );
+
+    Ok(())
+}
+
+/// Helper to create a test table with multiple indexes of different sizes
+async fn create_test_table_with_multiple_indexes(
+    client: &Client,
+    schema_name: &str,
+    table_name: &str,
+) -> Result<()> {
+    // Create table with multiple columns for creating different sized indexes
+    let create_table = format!(
+        "CREATE TABLE IF NOT EXISTS \"{}\".\"{}\" (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100),
+            email VARCHAR(255),
+            description TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        )",
+        schema_name, table_name
+    );
+    client.execute(&create_table, &[]).await?;
+
+    // Insert some data to make indexes have different sizes
+    for i in 1..=100 {
+        let insert = format!(
+            "INSERT INTO \"{}\".\"{}\" (name, email, description) VALUES ($1, $2, $3)",
+            schema_name, table_name
+        );
+        client
+            .execute(
+                &insert,
+                &[
+                    &format!("name_{}", i),
+                    &format!("email_{}@example.com", i),
+                    &format!("Description for record {}", i),
+                ],
+            )
+            .await?;
+    }
+
+    // Create indexes - these will have different sizes based on the data
+    // Index on name (smaller)
+    let create_idx1 = format!(
+        "CREATE INDEX IF NOT EXISTS \"idx_{}_name\" ON \"{}\".\"{}\" (name)",
+        table_name, schema_name, table_name
+    );
+    client.execute(&create_idx1, &[]).await?;
+
+    // Index on email (medium)
+    let create_idx2 = format!(
+        "CREATE INDEX IF NOT EXISTS \"idx_{}_email\" ON \"{}\".\"{}\" (email)",
+        table_name, schema_name, table_name
+    );
+    client.execute(&create_idx2, &[]).await?;
+
+    // Index on description (larger)
+    let create_idx3 = format!(
+        "CREATE INDEX IF NOT EXISTS \"idx_{}_description\" ON \"{}\".\"{}\" (description)",
+        table_name, schema_name, table_name
+    );
+    client.execute(&create_idx3, &[]).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_index_ordering_by_size_asc() -> Result<()> {
+    let client = create_test_connection().await?;
+    let test_schema = format!("test_schema_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+    let test_table = "test_table";
+
+    // Create test schema and table with multiple indexes
+    create_test_schema(&client, &test_schema).await?;
+    create_test_table_with_multiple_indexes(&client, &test_schema, test_table).await?;
+
+    // Get indexes ordered by size ascending
+    let indexes = pg_reindexer::index_operations::get_indexes_in_schemas(
+        &client,
+        &[test_schema.clone()],
+        None,
+        0,
+        1024,
+        pg_reindexer::types::IndexFilterType::Btree,
+        Some("asc"),
+    )
+    .await?;
+
+    // Should find at least some indexes
+    assert!(!indexes.is_empty(), "Should find indexes");
+
+    // Verify that indexes are ordered by size (ascending)
+    let mut previous_size: Option<i64> = None;
+    for index in &indexes {
+        if let Some(size) = index.size_bytes {
+            if let Some(prev) = previous_size {
+                assert!(
+                    size >= prev,
+                    "Indexes should be ordered by size ascending. Index {} has size {} but previous was {}",
+                    index.index_name,
+                    size,
+                    prev
+                );
+            }
+            previous_size = Some(size);
+        }
+    }
+
+    // Cleanup
+    drop_test_schema(&client, &test_schema).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_index_ordering_by_size_desc() -> Result<()> {
+    let client = create_test_connection().await?;
+    let test_schema = format!("test_schema_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+    let test_table = "test_table";
+
+    // Create test schema and table with multiple indexes
+    create_test_schema(&client, &test_schema).await?;
+    create_test_table_with_multiple_indexes(&client, &test_schema, test_table).await?;
+
+    // Get indexes ordered by size descending
+    let indexes = pg_reindexer::index_operations::get_indexes_in_schemas(
+        &client,
+        &[test_schema.clone()],
+        None,
+        0,
+        1024,
+        pg_reindexer::types::IndexFilterType::Btree,
+        Some("desc"),
+    )
+    .await?;
+
+    // Should find at least some indexes
+    assert!(!indexes.is_empty(), "Should find indexes");
+
+    // Verify that indexes are ordered by size (descending)
+    let mut previous_size: Option<i64> = None;
+    for index in &indexes {
+        if let Some(size) = index.size_bytes {
+            if let Some(prev) = previous_size {
+                assert!(
+                    size <= prev,
+                    "Indexes should be ordered by size descending. Index {} has size {} but previous was {}",
+                    index.index_name,
+                    size,
+                    prev
+                );
+            }
+            previous_size = Some(size);
+        }
+    }
+
+    // Cleanup
+    drop_test_schema(&client, &test_schema).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_index_size_bytes_field_populated() -> Result<()> {
+    let client = create_test_connection().await?;
+    let test_schema = format!("test_schema_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+    let test_table = "test_table";
+
+    // Create test schema and table with index
+    create_test_schema(&client, &test_schema).await?;
+    create_test_table_with_index(&client, &test_schema, test_table, "test_idx").await?;
+
+    // Get indexes without ordering
+    let indexes = pg_reindexer::index_operations::get_indexes_in_schemas(
+        &client,
+        &[test_schema.clone()],
+        None,
+        0,
+        1024,
+        pg_reindexer::types::IndexFilterType::Btree,
+        None,
+    )
+    .await?;
+
+    // Should find at least one index
+    assert!(!indexes.is_empty(), "Should find at least one index");
+
+    // Verify that size_bytes field is populated for all indexes
+    for index in &indexes {
+        assert!(
+            index.size_bytes.is_some(),
+            "Index {} should have size_bytes field populated",
+            index.index_name
+        );
+        assert!(
+            index.size_bytes.unwrap() >= 0,
+            "Index {} should have non-negative size",
+            index.index_name
+        );
+    }
+
+    // Cleanup
+    drop_test_schema(&client, &test_schema).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_default_ordering_asc() -> Result<()> {
+    let client = create_test_connection().await?;
+    let test_schema = format!("test_schema_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+    let test_table = "test_table";
+
+    // Create test schema and table with multiple indexes
+    create_test_schema(&client, &test_schema).await?;
+    create_test_table_with_multiple_indexes(&client, &test_schema, test_table).await?;
+
+    // Get indexes without specifying ordering (should default to ASC)
+    let indexes_no_order = pg_reindexer::index_operations::get_indexes_in_schemas(
+        &client,
+        &[test_schema.clone()],
+        None,
+        0,
+        1024,
+        pg_reindexer::types::IndexFilterType::Btree,
+        None,
+    )
+    .await?;
+
+    // Get indexes with explicit ASC ordering
+    let indexes_asc = pg_reindexer::index_operations::get_indexes_in_schemas(
+        &client,
+        &[test_schema.clone()],
+        None,
+        0,
+        1024,
+        pg_reindexer::types::IndexFilterType::Btree,
+        Some("asc"),
+    )
+    .await?;
+
+    // Both should return the same number of indexes
+    assert_eq!(
+        indexes_no_order.len(),
+        indexes_asc.len(),
+        "Default ordering and explicit ASC should return same number of indexes"
+    );
+
+    // If we have multiple indexes, verify they're in ascending order
+    if indexes_no_order.len() > 1 {
+        let mut previous_size: Option<i64> = None;
+        for index in &indexes_no_order {
+            if let Some(size) = index.size_bytes {
+                if let Some(prev) = previous_size {
+                    assert!(
+                        size >= prev,
+                        "Default ordering should be ascending. Index {} has size {} but previous was {}",
+                        index.index_name,
+                        size,
+                        prev
+                    );
+                }
+                previous_size = Some(size);
+            }
+        }
+    }
+
+    // Cleanup
+    drop_test_schema(&client, &test_schema).await?;
 
     Ok(())
 }
