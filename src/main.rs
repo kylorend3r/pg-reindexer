@@ -241,6 +241,14 @@ struct Args {
         help = "Silence mode: suppresses all terminal output except startup and completion messages. All logs are still written to the log file."
     )]
     silence_mode: bool,
+
+    /// Order indexes by size: 'asc' for smallest first, 'desc' for largest first. If not specified, indexes are ordered ascending by default.
+    #[arg(
+        long,
+        value_name = "ORDER",
+        help = "Order indexes by size: 'asc' for smallest first, 'desc' for largest first. If not specified, indexes are ordered ascending by default."
+    )]
+    order_by_size: Option<String>,
 }
 
 #[tokio::main]
@@ -392,6 +400,23 @@ async fn process_database(
     parsed_schemas: &[String],
     logger_arc: Arc<logging::Logger>,
 ) -> Result<()> {
+    // Validate and normalize order_by_size argument
+    let order_by_size: Option<String> = if let Some(ref order) = args.order_by_size {
+        let normalized = order.to_lowercase();
+        match normalized.as_str() {
+            "asc" | "desc" => Some(normalized),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Invalid value for --order-by-size: '{}'. Must be 'asc' or 'desc'",
+                    order
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    let order_by_size_str = order_by_size.as_deref();
+
     // Build connection configuration for this specific database
     let connection_config = ConnectionConfig::from_args(
         args.host.clone(),
@@ -588,6 +613,14 @@ async fn process_database(
     // Log the index size limits for clarity
     logger_arc.log_index_size_limits(args.min_size_gb, args.max_size_gb);
 
+    // Log ordering preference if specified
+    if let Some(order) = order_by_size_str {
+        logger_arc.log(
+            logging::LogLevel::Info,
+            &format!("Indexes will be ordered by size: {} ({} first)", order, if order == "asc" { "smallest" } else { "largest" }),
+        );
+    }
+
     // Initialize resume manager
     let resume_manager = state::ResumeManager::new(&client, logger_arc.clone());
 
@@ -604,6 +637,7 @@ async fn process_database(
                     args.min_size_gb,
                     args.max_size_gb,
                     args.index_type,
+                    order_by_size_str,
                 )
                 .await
             },
@@ -624,6 +658,7 @@ async fn process_database(
                     args.min_size_gb,
                     args.max_size_gb,
                     args.index_type,
+                    order_by_size_str,
                 )
                 .await
             },
