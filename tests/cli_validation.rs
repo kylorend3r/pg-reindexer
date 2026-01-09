@@ -127,6 +127,72 @@ fn test_valid_index_types() {
 }
 
 #[test]
+fn test_order_by_size_help() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--order-by-size"));
+}
+
+#[test]
+fn test_invalid_order_by_size() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--order-by-size")
+        .arg("invalid")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid value for --order-by-size")
+            .and(predicate::str::contains("Must be 'asc' or 'desc'")));
+}
+
+#[test]
+fn test_valid_order_by_size_asc() {
+    let mut cmd = get_cmd();
+    // This will fail at DB connection, but should pass argument parsing
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--order-by-size")
+        .arg("asc")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101)) // Not a parsing error
+        .code(predicate::ne(2)); // Not a clap error
+}
+
+#[test]
+fn test_valid_order_by_size_desc() {
+    let mut cmd = get_cmd();
+    // This will fail at DB connection, but should pass argument parsing
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--order-by-size")
+        .arg("desc")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101)) // Not a parsing error
+        .code(predicate::ne(2)); // Not a clap error
+}
+
+#[test]
+fn test_order_by_size_case_insensitive() {
+    // Test that ASC and DESC are accepted in different cases
+    for order_value in &["ASC", "asc", "Asc", "DESC", "desc", "Desc"] {
+        let mut cmd = get_cmd();
+        cmd.arg("--schema")
+            .arg("public")
+            .arg("--order-by-size")
+            .arg(order_value)
+            .env_clear()
+            .assert()
+            .code(predicate::ne(101)) // Not a parsing error
+            .code(predicate::ne(2)); // Not a clap error
+    }
+}
+
+#[test]
 fn test_dry_run_flag_parsing() {
     let mut cmd = get_cmd();
     // Should parse --dry-run flag correctly

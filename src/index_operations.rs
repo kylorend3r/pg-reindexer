@@ -25,9 +25,10 @@ pub async fn get_indexes_in_schema(
     min_size_gb: u64,
     max_size_gb: u64,
     index_type: IndexFilterType,
+    order_by_size: Option<&str>,
 ) -> Result<Vec<IndexInfo>> {
     let has_table_filter = table_name.is_some();
-    let query = crate::queries::build_indexes_query(has_table_filter, index_type);
+    let query = crate::queries::build_indexes_query(has_table_filter, index_type, order_by_size);
 
     let rows = if let Some(table) = table_name {
         client
@@ -59,6 +60,7 @@ pub async fn get_indexes_in_schema(
             index_name: row.get(2),
             index_type: row.get(4),
             table_name: row.get(1),
+            size_bytes: row.get(5), // size_bytes is now column 5
         };
         indexes.push(index);
     }
@@ -74,6 +76,7 @@ pub async fn get_indexes_in_schemas(
     min_size_gb: u64,
     max_size_gb: u64,
     index_type: IndexFilterType,
+    order_by_size: Option<&str>,
 ) -> Result<Vec<IndexInfo>> {
     let mut all_indexes = Vec::new();
 
@@ -85,6 +88,7 @@ pub async fn get_indexes_in_schemas(
             min_size_gb,
             max_size_gb,
             index_type,
+            order_by_size,
         )
         .await?;
         all_indexes.extend(indexes);

@@ -4,6 +4,7 @@ pub struct IndexInfo {
     pub index_name: String,
     pub index_type: String,
     pub table_name: String,
+    pub size_bytes: Option<i64>,
 }
 
 #[derive(Debug, Clone)]

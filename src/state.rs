@@ -221,6 +221,7 @@ pub async fn load_pending_indexes(
             table_name: row.get(1),
             index_name: row.get(2),
             index_type: row.get(3),
+            size_bytes: None, // Size is not stored in state table
         });
     }
 

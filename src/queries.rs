@@ -13,10 +13,11 @@ pub const GET_ACTIVE_VACUUM: &str = r#"
 /// # Parameters
 /// - `has_table_filter`: If true, includes `t.relname = $2` condition
 /// - `index_type`: Determines the index type filter (All, Btree, or Constraint)
+/// - `order_by_size`: Optional ordering by size: `Some("asc")` for ascending, `Some("desc")` for descending, `None` for default ascending
 /// 
 /// # Returns
 /// The constructed SQL query string
-pub fn build_indexes_query(has_table_filter: bool, index_type: IndexFilterType) -> String {
+pub fn build_indexes_query(has_table_filter: bool, index_type: IndexFilterType, order_by_size: Option<&str>) -> String {
     // Base query structure (common to all variants)
     let base_query = r#"
         SELECT 
@@ -24,7 +25,8 @@ pub fn build_indexes_query(has_table_filter: bool, index_type: IndexFilterType) 
             t.relname as table_name,
             i.relname as index_name,
             ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
-            am.amname as index_type
+            am.amname as index_type,
+            pg_relation_size(i.oid) as size_bytes
         FROM pg_index x
         JOIN pg_class i ON i.oid = x.indexrelid
         JOIN pg_class t ON t.oid = x.indrelid
@@ -67,9 +69,16 @@ pub fn build_indexes_query(has_table_filter: bool, index_type: IndexFilterType) 
         size_param_start + 1
     ));
     
+    // Build ORDER BY clause based on order_by_size parameter
+    let order_clause = match order_by_size {
+        Some("asc") => "    ORDER BY pg_relation_size(i.oid) ASC",
+        Some("desc") => "    ORDER BY pg_relation_size(i.oid) DESC",
+        _ => "    ORDER BY pg_relation_size(i.oid) ASC", // Default to ASC for backward compatibility
+    };
+    
     // Build final query
     let where_clause = conditions.join("\n");
-    format!("{}\n{}\n    ORDER BY pg_relation_size(i.oid) ASC;", base_query, where_clause)
+    format!("{}\n{}\n{};", base_query, where_clause, order_clause)
 }
 
 pub const GET_INDEX_SIZE: &str = r#"
@@ -188,3 +197,80 @@ pub const GET_ALL_USER_SCHEMAS: &str = r#"
     AND nspname NOT LIKE 'pg_toast_temp_%'
     ORDER BY nspname;
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_indexes_query_ascending_order() {
+        let query = build_indexes_query(false, IndexFilterType::Btree, Some("asc"));
+        assert!(
+            query.contains("ORDER BY pg_relation_size(i.oid) ASC"),
+            "Query should contain ASC ordering clause"
+        );
+        assert!(
+            query.contains("size_bytes"),
+            "Query should include size_bytes column"
+        );
+    }
+
+    #[test]
+    fn test_build_indexes_query_descending_order() {
+        let query = build_indexes_query(false, IndexFilterType::Btree, Some("desc"));
+        assert!(
+            query.contains("ORDER BY pg_relation_size(i.oid) DESC"),
+            "Query should contain DESC ordering clause"
+        );
+        assert!(
+            query.contains("size_bytes"),
+            "Query should include size_bytes column"
+        );
+    }
+
+    #[test]
+    fn test_build_indexes_query_default_ordering() {
+        let query = build_indexes_query(false, IndexFilterType::Btree, None);
+        assert!(
+            query.contains("ORDER BY pg_relation_size(i.oid) ASC"),
+            "Query should default to ASC ordering"
+        );
+        assert!(
+            query.contains("size_bytes"),
+            "Query should include size_bytes column"
+        );
+    }
+
+    #[test]
+    fn test_build_indexes_query_with_table_filter() {
+        let query = build_indexes_query(true, IndexFilterType::Btree, Some("asc"));
+        assert!(
+            query.contains("t.relname = $2"),
+            "Query should include table filter when has_table_filter is true"
+        );
+        assert!(
+            query.contains("ORDER BY pg_relation_size(i.oid) ASC"),
+            "Query should contain ordering clause"
+        );
+    }
+
+    #[test]
+    fn test_build_indexes_query_includes_size_bytes() {
+        // Test that all variants include size_bytes in SELECT
+        let variants = vec![
+            (false, IndexFilterType::Btree, Some("asc")),
+            (false, IndexFilterType::Btree, Some("desc")),
+            (false, IndexFilterType::Btree, None),
+            (true, IndexFilterType::Constraint, Some("asc")),
+            (false, IndexFilterType::All, Some("desc")),
+        ];
+
+        for (has_table_filter, index_type, order_by_size) in variants {
+            let query = build_indexes_query(has_table_filter, index_type, order_by_size);
+            assert!(
+                query.contains("pg_relation_size(i.oid) as size_bytes"),
+                "Query should include size_bytes column regardless of filters"
+            );
+        }
+    }
+}
