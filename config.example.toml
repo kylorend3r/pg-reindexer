@@ -1,0 +1,58 @@
+# PostgreSQL Reindexer Configuration File (TOML example)
+# CLI arguments take precedence over values in this file
+
+# Connection settings
+host = "localhost"
+port = 5432
+database = "postgres"
+username = "postgres"
+password = "postgres"  # Consider using environment variables or .pgpass for security
+
+# Schema settings
+# schema = "public"  # Can be a single schema or comma-separated list
+discover-all-schemas = true  # Alternative to schema
+# table = "users"  # Optional: reindex indexes for a specific table only
+
+# Operation settings
+dry-run = false
+threads = 1
+
+# Skip checks
+skip-inactive-replication-slots = false
+skip-sync-replication-connection = false
+skip-active-vacuums = false
+
+# Size filtering
+max-size-gb = 1024
+min-size-gb = 0
+
+# Index type: "btree", "constraint", or "all"
+index-type = "btree"
+
+# Maintenance settings
+maintenance-work-mem-gb = 2
+max-parallel-maintenance-workers = 1
+maintenance-io-concurrency = 10
+lock-timeout-seconds = 0
+
+# Logging
+log-file = "reindexer.log"
+
+# Optional settings
+# reindex-only-bloated = 15  # Only reindex indexes with bloat >= 15%
+concurrently = true
+clean-orphaned-indexes = false
+
+# SSL settings
+ssl = false
+ssl-self-signed = false
+# ssl-ca-cert = "/path/to/ca-cert.pem"
+# ssl-client-cert = "/path/to/client-cert.pem"
+# ssl-client-key = "/path/to/client-key.pem"
+
+# Other settings
+# exclude-indexes = "idx_users_email,idx_orders_created_at"
+resume = false
+silence-mode = false
+# order-by-size = "asc"  # "asc" or "desc"
+
