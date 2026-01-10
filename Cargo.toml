@@ -17,6 +17,8 @@ native-tls = { version = "0.2", features = ["vendored"] }
 postgres-native-tls = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 uuid = { version = "1.0", features = ["v4"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
 
 [dev-dependencies]
 assert_cmd = "2.0"

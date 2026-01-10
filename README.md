@@ -18,6 +18,7 @@ A high-performance, production-ready PostgreSQL index maintenance tool written i
   - [Size Filtering](#-size-filtering)
   - [Size-based Ordering](#-size-based-ordering)
   - [Production Scenarios](#-production-scenarios)
+- [Configuration File](#configuration-file)
 - [Environment Variables](#environment-variables)
 - [Command Line Interface](#command-line-interface)
 - [Key Features](#key-features)
@@ -90,6 +91,12 @@ pg-reindexer --database mydb --schema public --host your-postgres-server.com --s
 
 # SSL connection with invalid certificate acceptance (testing only)
 pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl --ssl-self-signed
+
+# Using TOML configuration file
+pg-reindexer --config config.toml
+
+# Using config file with CLI overrides (CLI takes precedence)
+pg-reindexer --config config.toml --threads 8 --schema public
 ```
 
 ## Usage Examples
@@ -404,6 +411,184 @@ pg-reindexer --database db1,db2 --discover-all-schemas --threads 8 --maintenance
 ```
 
 
+## Configuration File
+
+Instead of providing all settings via command-line arguments, you can use a TOML configuration file. This is especially useful for:
+- **Reproducible configurations**: Share settings across environments
+- **Complex setups**: Avoid long command-line invocations
+- **Team consistency**: Standardize reindexing parameters
+- **CI/CD pipelines**: Version-controlled configuration
+
+### Basic Usage
+
+```bash
+# Use a configuration file
+pg-reindexer --config config.toml
+
+# CLI arguments override config file values
+pg-reindexer --config config.toml --threads 8 --schema public
+```
+
+### Configuration File Format
+
+All fields in the configuration file are **optional**. Only specify what you need. CLI arguments always take precedence over config file values.
+
+Here's an example configuration file (`config.example.toml`):
+
+```toml
+# PostgreSQL Reindexer Configuration File
+# CLI arguments take precedence over values in this file
+
+# Connection settings
+host = "localhost"
+port = 5432
+database = "mydb"
+username = "postgres"
+password = "mypassword"  # Consider using environment variables or .pgpass for security
+
+# Schema settings
+schema = "public"  # Can be a single schema or comma-separated list
+# discover-all-schemas = false  # Alternative to schema
+# table = "users"  # Optional: reindex indexes for a specific table only
+
+# Operation settings
+dry-run = false
+threads = 4
+
+# Skip checks
+skip-inactive-replication-slots = false
+skip-sync-replication-connection = false
+skip-active-vacuums = false
+
+# Size filtering
+max-size-gb = 1024
+min-size-gb = 0
+
+# Index type: "btree", "constraint", or "all"
+index-type = "btree"
+
+# Maintenance settings
+maintenance-work-mem-gb = 2
+max-parallel-maintenance-workers = 4
+maintenance-io-concurrency = 10
+lock-timeout-seconds = 0
+
+# Logging
+log-file = "reindexer.log"
+
+# Optional settings
+# reindex-only-bloated = 15  # Only reindex indexes with bloat >= 15%
+concurrently = true
+clean-orphaned-indexes = false
+
+# SSL settings
+ssl = false
+ssl-self-signed = false
+# ssl-ca-cert = "/path/to/ca-cert.pem"
+# ssl-client-cert = "/path/to/client-cert.pem"
+# ssl-client-key = "/path/to/client-key.pem"
+
+# Other settings
+# exclude-indexes = "idx_users_email,idx_orders_created_at"
+resume = false
+silence-mode = false
+# order-by-size = "asc"  # "asc" or "desc"
+```
+
+### Configuration File Examples
+
+```bash
+# Minimal config file (only required fields)
+pg-reindexer --config minimal.toml
+# minimal.toml:
+# schema = "public"
+# database = "mydb"
+
+# Production config for maintenance window
+pg-reindexer --config production.toml
+# production.toml:
+# schema = "public,app_schema,analytics_schema"
+# threads = 8
+# maintenance-work-mem-gb = 4
+# max-parallel-maintenance-workers = 4
+# maintenance-io-concurrency = 256
+# concurrently = true
+
+# Development config with dry-run
+pg-reindexer --config dev.toml
+# dev.toml:
+# schema = "public"
+# dry-run = true
+# threads = 2
+# log-file = "dev-reindexer.log"
+
+# Override config file values via CLI
+pg-reindexer --config production.toml --threads 16  # Uses 16 instead of config value
+```
+
+### Configuration File Advantages
+
+- **All Settings Supported**: Every CLI argument can be specified in the config file
+- **Partial Configuration**: Only specify the fields you need to override
+- **Comments**: TOML supports comments for documentation
+- **Type Safety**: TOML enforces correct data types
+- **Version Control**: Store configurations in git for reproducible operations
+
+### Configuration Precedence
+
+The tool resolves configuration values in the following order (highest to lowest priority):
+
+1. **CLI arguments** (highest priority)
+2. **Configuration file values**
+3. **Environment variables** (for connection parameters)
+4. **Default values** (lowest priority)
+
+Example:
+```bash
+# config.toml has: threads = 4
+# CLI specifies: --threads 8
+# Result: threads = 8 (CLI wins)
+
+# config.toml has: threads = 4
+# CLI doesn't specify threads
+# Result: threads = 4 (config file wins)
+
+# config.toml doesn't specify threads
+# CLI doesn't specify threads
+# Result: threads = 2 (default value)
+```
+
+### Configuration File Best Practices
+
+1. **Security**: Never commit passwords to version control. Use environment variables or `.pgpass` files instead:
+   ```toml
+   # In config.toml (don't commit passwords)
+   host = "localhost"
+   database = "mydb"
+   username = "postgres"
+   # password = ""  # Leave empty, use PG_PASSWORD env var or .pgpass
+   ```
+
+2. **Environment-Specific Configs**: Create separate config files for different environments:
+   - `config.dev.toml` - Development settings
+   - `config.staging.toml` - Staging settings
+   - `config.production.toml` - Production settings
+
+3. **Comments**: Use comments to document why specific settings were chosen:
+   ```toml
+   # Conservative settings for production hours
+   threads = 1
+   maintenance-work-mem-gb = 1
+   
+   # Aggressive settings for maintenance window
+   # threads = 8
+   # maintenance-work-mem-gb = 4
+   ```
+
+4. **Team Sharing**: Store commonly used configurations in shared repositories for consistency across team members.
+
+See `config.example.toml` in the repository for a complete example configuration file with all available options.
+
 ## Environment Variables
 
 ```bash
@@ -469,11 +654,12 @@ Usage: pg-reindexer [OPTIONS] [--schema <SCHEMA> | --discover-all-schemas]
 Note: Either --schema or --discover-all-schemas must be provided. The --schema parameter accepts a single schema name or a comma-separated list of schema names (maximum 512 schemas). The --discover-all-schemas option automatically discovers all user schemas in the database (excluding system schemas like pg_catalog, information_schema, etc.).
 
 Options:
-  -H, --host <HOST>                                    PostgreSQL host (can also be set via PG_HOST environment variable)
-  -p, --port <PORT>                                     PostgreSQL port (can also be set via PG_PORT environment variable)
-  -d, --database <DATABASE>                             Database name(s) to connect to. Can be a single database or comma-separated list of databases (can also be set via PG_DATABASE environment variable)
-  -U, --username <USERNAME>                             Username (can also be set via PG_USER environment variable)
-  -P, --password <PASSWORD>                             Password (can also be set via PG_PASSWORD environment variable)
+  -C, --config <FILE>                                   Path to TOML configuration file. Configuration file values are overridden by CLI arguments.
+  -H, --host <HOST>                                    PostgreSQL host (can also be set via PG_HOST environment variable or config file)
+  -p, --port <PORT>                                     PostgreSQL port (can also be set via PG_PORT environment variable or config file)
+  -d, --database <DATABASE>                             Database name(s) to connect to. Can be a single database or comma-separated list of databases (can also be set via PG_DATABASE environment variable or config file)
+  -U, --username <USERNAME>                             Username (can also be set via PG_USER environment variable or config file)
+  -P, --password <PASSWORD>                             Password (can also be set via PG_PASSWORD environment variable or config file)
   -s, --schema <SCHEMA>                                 Schema name(s) to reindex. Can be a single schema or comma-separated list (max 512 schemas). Not required if --discover-all-schemas is used.
       --discover-all-schemas                             Discover all user schemas in the database and collect indexes for all discovered schemas. System schemas (pg_catalog, information_schema, etc.) are excluded.
   -t, --table <TABLE>                                   Table name to reindex (optional - if not provided, reindexes all indexes in schema)
@@ -604,6 +790,14 @@ The performance improvement becomes even more significant with larger numbers of
 - **Testing Mode**: Optional invalid certificate acceptance for development and testing environments
 - **Flexible Configuration**: Combine SSL with environment variables and command-line parameters
 - **Production Ready**: Secure by default with proper certificate validation
+
+### 📝 **Configuration File Support**
+- **TOML Configuration**: Use TOML files for persistent, version-controlled configurations
+- **Flexible Configuration**: All CLI arguments can be specified in config files
+- **Partial Configuration**: Only specify the fields you need to override
+- **CLI Override**: Command-line arguments always take precedence over config file values
+- **Team Consistency**: Share standardized configurations across team members
+- **CI/CD Friendly**: Version-controlled configurations for automated pipelines
 
 ## Database Schema
 
