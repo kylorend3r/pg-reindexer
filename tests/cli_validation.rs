@@ -3,7 +3,8 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, Builder};
+use std::io::Write;
 
 /// Helper to get the binary command
 #[allow(deprecated)] // cargo_bin is deprecated but still works for our use case
@@ -907,4 +908,130 @@ fn test_database_with_consecutive_commas() {
         .code(predicate::ne(101))
         .code(predicate::ne(2));
 }
+
+// ============================================================================
+// Configuration file support tests
+// ============================================================================
+
+#[test]
+fn test_config_file_toml() {
+    let config_file = Builder::new()
+        .suffix(".toml")
+        .tempfile()
+        .unwrap();
+    
+    writeln!(config_file.as_file(), r#"
+host = "localhost"
+port = 5432
+database = "testdb"
+username = "testuser"
+schema = "public"
+threads = 4
+dry-run = false
+"#).unwrap();
+    
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+
+#[test]
+fn test_config_file_not_found() {
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg("/nonexistent/config.toml")
+        .env_clear()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Configuration file not found")
+            .or(predicate::str::contains("not found")));
+}
+
+#[test]
+fn test_config_file_invalid_format() {
+    let config_file = Builder::new()
+        .suffix(".txt")
+        .tempfile()
+        .unwrap();
+    
+    writeln!(config_file.as_file(), "invalid config").unwrap();
+    
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Failed to parse TOML")
+            .or(predicate::str::contains("TOML")));
+}
+
+#[test]
+fn test_config_file_cli_override() {
+    let config_file = Builder::new()
+        .suffix(".toml")
+        .tempfile()
+        .unwrap();
+    
+    writeln!(config_file.as_file(), r#"
+host = "config-host"
+port = 5433
+database = "configdb"
+username = "configuser"
+schema = "public"
+threads = 8
+"#).unwrap();
+    
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    // CLI args should override config file values
+    cmd.arg("--config")
+        .arg(config_path)
+        .arg("--schema")
+        .arg("public")
+        .arg("--threads")
+        .arg("4")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_help_contains_config_option() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--config")
+            .and(predicate::str::contains("TOML")));
+}
+
+#[test]
+fn test_config_file_invalid_toml() {
+    let config_file = Builder::new()
+        .suffix(".toml")
+        .tempfile()
+        .unwrap();
+    
+    writeln!(config_file.as_file(), "invalid = toml = syntax").unwrap();
+    
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Failed to parse")
+            .or(predicate::str::contains("TOML")));
+}
+
 
