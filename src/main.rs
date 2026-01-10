@@ -4,6 +4,8 @@ use pg_reindexer::{logging, memory_table, orchestrator, queries, schema, state, 
 use anyhow::{Context, Result};
 use clap::Parser;
 use std::{collections::HashSet, sync::Arc};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
@@ -249,11 +251,266 @@ struct Args {
         help = "Order indexes by size: 'asc' for smallest first, 'desc' for largest first. If not specified, indexes are ordered ascending by default."
     )]
     order_by_size: Option<String>,
+
+    /// Path to configuration file (TOML format). Configuration file values are overridden by CLI arguments.
+    #[arg(
+        short = 'C',
+        long,
+        value_name = "FILE",
+        help = "Path to TOML configuration file. Configuration file values are overridden by CLI arguments."
+    )]
+    config: Option<String>,
+}
+
+/// Configuration structure for file-based configuration
+/// All fields are optional to allow partial configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct Config {
+    host: Option<String>,
+    port: Option<u16>,
+    database: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    schema: Option<String>,
+    discover_all_schemas: Option<bool>,
+    table: Option<String>,
+    dry_run: Option<bool>,
+    threads: Option<usize>,
+    skip_inactive_replication_slots: Option<bool>,
+    skip_sync_replication_connection: Option<bool>,
+    skip_active_vacuums: Option<bool>,
+    max_size_gb: Option<u64>,
+    min_size_gb: Option<u64>,
+    index_type: Option<String>,
+    maintenance_work_mem_gb: Option<u64>,
+    max_parallel_maintenance_workers: Option<u64>,
+    maintenance_io_concurrency: Option<u64>,
+    lock_timeout_seconds: Option<u64>,
+    log_file: Option<String>,
+    reindex_only_bloated: Option<u8>,
+    concurrently: Option<bool>,
+    clean_orphaned_indexes: Option<bool>,
+    ssl: Option<bool>,
+    ssl_self_signed: Option<bool>,
+    ssl_ca_cert: Option<String>,
+    ssl_client_cert: Option<String>,
+    ssl_client_key: Option<String>,
+    exclude_indexes: Option<String>,
+    resume: Option<bool>,
+    silence_mode: Option<bool>,
+    order_by_size: Option<String>,
+}
+
+/// Load configuration from a TOML file
+fn load_config_file(path: &str) -> Result<Config> {
+    let file_path = Path::new(path);
+    
+    // Check if file exists
+    if !file_path.exists() {
+        return Err(anyhow::anyhow!("Configuration file not found: {}", path));
+    }
+
+    // Read and parse TOML content
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read configuration file: {}", path))?;
+
+    let config = toml::from_str::<Config>(&content)
+        .with_context(|| format!("Failed to parse TOML configuration file: {}", path))?;
+
+    Ok(config)
+}
+
+/// Merge configuration file values with CLI arguments
+/// CLI arguments take precedence over config file values
+fn merge_config(config_file: Config, mut args: Args) -> Args {
+    // Connection settings
+    if args.host.is_none() {
+        args.host = config_file.host;
+    }
+    if args.port.is_none() {
+        args.port = config_file.port;
+    }
+    if args.database.is_none() {
+        args.database = config_file.database;
+    }
+    if args.username.is_none() {
+        args.username = config_file.username;
+    }
+    if args.password.is_none() {
+        args.password = config_file.password;
+    }
+
+    // Schema settings
+    if args.schema.is_none() {
+        args.schema = config_file.schema;
+    }
+    if let Some(discover) = config_file.discover_all_schemas {
+        // Use config value only if CLI didn't explicitly override (when both are provided, CLI takes precedence)
+        // Since we can't detect CLI explicit override perfectly, we check if config has a different value
+        if args.discover_all_schemas != discover {
+            args.discover_all_schemas = discover;
+        }
+    }
+    if args.table.is_none() {
+        args.table = config_file.table;
+    }
+
+    // Operation settings
+    if let Some(dry_run) = config_file.dry_run {
+        if args.dry_run != dry_run {
+            args.dry_run = dry_run;
+        }
+    }
+    if args.threads == 2 {
+        // Only use config if CLI didn't override (default is 2)
+        if let Some(threads) = config_file.threads {
+            args.threads = threads;
+        }
+    }
+
+    // Skip flags
+    if let Some(skip_slots) = config_file.skip_inactive_replication_slots {
+        if args.skip_inactive_replication_slots != skip_slots {
+            args.skip_inactive_replication_slots = skip_slots;
+        }
+    }
+    if let Some(skip_sync) = config_file.skip_sync_replication_connection {
+        if args.skip_sync_replication_connection != skip_sync {
+            args.skip_sync_replication_connection = skip_sync;
+        }
+    }
+    if let Some(skip_vacuums) = config_file.skip_active_vacuums {
+        if args.skip_active_vacuums != skip_vacuums {
+            args.skip_active_vacuums = skip_vacuums;
+        }
+    }
+
+    // Size settings
+    if args.max_size_gb == 1024 {
+        // Only use config if CLI didn't override (default is 1024)
+        if let Some(max_size) = config_file.max_size_gb {
+            args.max_size_gb = max_size;
+        }
+    }
+    if args.min_size_gb == 0 {
+        // Only use config if CLI didn't override (default is 0)
+        if let Some(min_size) = config_file.min_size_gb {
+            args.min_size_gb = min_size;
+        }
+    }
+
+    // Index type
+    if args.index_type == IndexFilterType::Btree {
+        // Only use config if CLI didn't override (default is Btree)
+        if let Some(ref index_type_str) = config_file.index_type {
+            if let Ok(index_type) = index_type_str.parse::<IndexFilterType>() {
+                args.index_type = index_type;
+            }
+        }
+    }
+
+    // Maintenance settings
+    if args.maintenance_work_mem_gb == 1 {
+        // Only use config if CLI didn't override (default is 1)
+        if let Some(mem_gb) = config_file.maintenance_work_mem_gb {
+            args.maintenance_work_mem_gb = mem_gb;
+        }
+    }
+    if args.max_parallel_maintenance_workers == 2 {
+        // Only use config if CLI didn't override (default is 2)
+        if let Some(workers) = config_file.max_parallel_maintenance_workers {
+            args.max_parallel_maintenance_workers = workers;
+        }
+    }
+    if args.maintenance_io_concurrency == 10 {
+        // Only use config if CLI didn't override (default is 10)
+        if let Some(io_concurrency) = config_file.maintenance_io_concurrency {
+            args.maintenance_io_concurrency = io_concurrency;
+        }
+    }
+    if args.lock_timeout_seconds == 0 {
+        // Only use config if CLI didn't override (default is 0)
+        if let Some(timeout) = config_file.lock_timeout_seconds {
+            args.lock_timeout_seconds = timeout;
+        }
+    }
+
+    // Log file
+    if args.log_file == "reindexer.log" {
+        // Only use config if CLI didn't override (default is "reindexer.log")
+        if let Some(log_file) = config_file.log_file {
+            args.log_file = log_file;
+        }
+    }
+
+    // Optional settings
+    if args.reindex_only_bloated.is_none() {
+        args.reindex_only_bloated = config_file.reindex_only_bloated;
+    }
+    if let Some(concurrent) = config_file.concurrently {
+        if args.concurrently != concurrent {
+            args.concurrently = concurrent;
+        }
+    }
+    if let Some(clean) = config_file.clean_orphaned_indexes {
+        if args.clean_orphaned_indexes != clean {
+            args.clean_orphaned_indexes = clean;
+        }
+    }
+
+    // SSL settings
+    if let Some(ssl_enabled) = config_file.ssl {
+        if args.ssl != ssl_enabled {
+            args.ssl = ssl_enabled;
+        }
+    }
+    if let Some(ssl_self) = config_file.ssl_self_signed {
+        if args.ssl_self_signed != ssl_self {
+            args.ssl_self_signed = ssl_self;
+        }
+    }
+    if args.ssl_ca_cert.is_none() {
+        args.ssl_ca_cert = config_file.ssl_ca_cert;
+    }
+    if args.ssl_client_cert.is_none() {
+        args.ssl_client_cert = config_file.ssl_client_cert;
+    }
+    if args.ssl_client_key.is_none() {
+        args.ssl_client_key = config_file.ssl_client_key;
+    }
+
+    // Other settings
+    if args.exclude_indexes.is_none() {
+        args.exclude_indexes = config_file.exclude_indexes;
+    }
+    if let Some(resume) = config_file.resume {
+        if args.resume != resume {
+            args.resume = resume;
+        }
+    }
+    if let Some(silence) = config_file.silence_mode {
+        if args.silence_mode != silence {
+            args.silence_mode = silence;
+        }
+    }
+    if args.order_by_size.is_none() {
+        args.order_by_size = config_file.order_by_size;
+    }
+
+    args
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
+
+    // Load and merge configuration file if provided
+    if let Some(config_path) = &args.config {
+        let config = load_config_file(config_path)
+            .context("Failed to load configuration file")?;
+        args = merge_config(config, args);
+    }
 
     // Validate that either schema is provided or discover_all_schemas is enabled
     if args.schema.is_none() && !args.discover_all_schemas {
