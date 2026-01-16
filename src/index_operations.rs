@@ -165,6 +165,41 @@ pub async fn get_index_bloat_ratio(
     }
 }
 
+/// Check if an error is retryable based on error message patterns
+/// Returns a tuple: (is_retryable, is_connection_error)
+/// - is_retryable: true if the error should be retried
+/// - is_connection_error: true if it's a connection error (needs new connection)
+fn is_retryable_error(error: &tokio_postgres::Error) -> (bool, bool) {
+    let error_msg = error.to_string().to_lowercase();
+    
+    // Check for lock timeout
+    if error_msg.contains("canceling statement due to lock timeout") {
+        return (true, false);
+    }
+    
+    // Check for deadlock
+    if error_msg.contains("deadlock detected") {
+        return (true, false);
+    }
+    
+    // Check for connection errors
+    let connection_error_patterns = [
+        "connection closed",
+        "connection lost",
+        "server closed the connection",
+        "broken pipe",
+        "connection reset",
+    ];
+    
+    for pattern in &connection_error_patterns {
+        if error_msg.contains(pattern) {
+            return (true, true);
+        }
+    }
+    
+    (false, false)
+}
+
 /// Worker function that processes indexes using the memory table for concurrency control
 pub async fn worker_with_memory_table(
     worker_id: usize,
@@ -244,6 +279,8 @@ pub async fn worker_with_memory_table(
                 config.concurrently,
                 config.user_index_type,
                 config.session_id.clone(),
+                Some(connection_string.clone()),
+                Some(config.clone()),
             )
             .await;
 
@@ -387,6 +424,8 @@ pub async fn reindex_index_with_memory_table(
     concurrently: bool,
     user_index_type: IndexFilterType,
     _session_id: Option<String>,
+    connection_string: Option<String>,
+    worker_config: Option<WorkerConfig>,
 ) -> Result<crate::types::ReindexStatus> {
     logger.log_index_start(
         worker_id,
@@ -528,43 +567,175 @@ pub async fn reindex_index_with_memory_table(
         ),
     );
 
+    const MAX_RETRIES: u32 = 3;
+    const RETRY_DELAY_SECS: u64 = 2;
+    
+    // Clone connection parameters for use in retry loop
+    let connection_string_clone = connection_string.clone();
+    let worker_config_clone = worker_config.clone();
+    
+    let mut current_client = client.clone();
     let start_time = std::time::Instant::now();
-    let result = client.execute(&reindex_sql, &[]).await;
-    let duration = start_time.elapsed();
-
-    match &result {
-        Ok(_) => {
-            logger.log(
-                logging::LogLevel::Info,
-                &format!(
-                    "Reindex SQL executed successfully for {}.{} in {:?}",
-                    index_info.schema_name, index_info.index_name, duration
-                ),
-            );
-        }
-        Err(e) => {
-            logger.log_index_failed(
-                &index_info.schema_name,
-                &index_info.index_name,
-                &format!("SQL execution failed after {:?}: {}", duration, e),
-            );
-
-            // Save failed reindex record
-            let index_data = crate::save::IndexData {
-                schema_name: index_info.schema_name.clone(),
-                index_name: index_info.index_name.clone(),
-                index_type: user_index_type.to_string(),
-                reindex_status: crate::types::ReindexStatus::Failed,
-                before_size: Some(before_size),
-                after_size: None,
-                size_change: None,
-                reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
-            };
-            crate::save::save_index_info(&client, &index_data).await?;
-
-            return Ok(crate::types::ReindexStatus::Failed);
+    let mut duration = std::time::Duration::from_secs(0);
+    
+    // Retry loop: attempt up to 4 times (1 initial + 3 retries)
+    for attempt in 0..=MAX_RETRIES {
+        let result = current_client.execute(&reindex_sql, &[]).await;
+        duration = start_time.elapsed();
+        
+        match result {
+            Ok(_) => {
+                logger.log(
+                    logging::LogLevel::Info,
+                    &format!(
+                        "Reindex SQL executed successfully for {}.{} in {:?} (attempt {})",
+                        index_info.schema_name, index_info.index_name, duration, attempt + 1
+                    ),
+                );
+                break; // Success, exit retry loop
+            }
+            Err(e) => {
+                let (is_retryable, is_connection_error) = is_retryable_error(&e);
+                
+                if !is_retryable {
+                    // Non-retryable error, fail immediately
+                    logger.log_index_failed(
+                        &index_info.schema_name,
+                        &index_info.index_name,
+                        &format!("SQL execution failed after {:?} (non-retryable error): {}", duration, e),
+                    );
+                    
+                    // Save failed reindex record
+                    let index_data = crate::save::IndexData {
+                        schema_name: index_info.schema_name.clone(),
+                        index_name: index_info.index_name.clone(),
+                        index_type: user_index_type.to_string(),
+                        reindex_status: crate::types::ReindexStatus::Failed,
+                        before_size: Some(before_size),
+                        after_size: None,
+                        size_change: None,
+                        reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
+                    };
+                    crate::save::save_index_info(&current_client, &index_data).await?;
+                    
+                    return Ok(crate::types::ReindexStatus::Failed);
+                }
+                
+                // Retryable error
+                if attempt < MAX_RETRIES {
+                    let error_msg_lower = e.to_string().to_lowercase();
+                    let error_type = if is_connection_error {
+                        "connection error"
+                    } else if error_msg_lower.contains("deadlock") {
+                        "deadlock"
+                    } else {
+                        "lock timeout"
+                    };
+                    
+                    logger.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "Reindex failed for {}.{} due to {} (attempt {}/{}): {}. Retrying in {} seconds...",
+                            index_info.schema_name,
+                            index_info.index_name,
+                            error_type,
+                            attempt + 1,
+                            MAX_RETRIES + 1,
+                            e,
+                            RETRY_DELAY_SECS
+                        ),
+                    );
+                    
+                    // If it's a connection error, create a new connection
+                    if is_connection_error {
+                        if let (Some(ref conn_str), Some(ref config)) = (connection_string_clone.as_ref(), worker_config_clone.as_ref()) {
+                            logger.log(
+                                logging::LogLevel::Info,
+                                &format!(
+                                    "Creating new connection for {}.{} due to connection error",
+                                    index_info.schema_name, index_info.index_name
+                                ),
+                            );
+                            
+                            match crate::connection::create_connection_with_session_parameters_ssl(
+                                conn_str,
+                                config.maintenance_work_mem_gb,
+                                config.max_parallel_maintenance_workers,
+                                config.maintenance_io_concurrency,
+                                config.lock_timeout_seconds,
+                                config.use_ssl,
+                                config.accept_invalid_certs,
+                                config.ssl_ca_cert.clone(),
+                                config.ssl_client_cert.clone(),
+                                config.ssl_client_key.clone(),
+                                &logger,
+                            )
+                            .await
+                            {
+                                Ok(new_client) => {
+                                    current_client = Arc::new(new_client);
+                                    logger.log(
+                                        logging::LogLevel::Info,
+                                        &format!(
+                                            "Successfully created new connection for {}.{}",
+                                            index_info.schema_name, index_info.index_name
+                                        ),
+                                    );
+                                }
+                                Err(conn_err) => {
+                                    logger.log(
+                                        logging::LogLevel::Error,
+                                        &format!(
+                                            "Failed to create new connection for {}.{}: {}",
+                                            index_info.schema_name, index_info.index_name, conn_err
+                                        ),
+                                    );
+                                    // Continue with existing client, will likely fail but we'll try
+                                }
+                            }
+                        } else {
+                            logger.log(
+                                logging::LogLevel::Warning,
+                                &format!(
+                                    "Connection error detected for {}.{} but connection creation parameters not provided. Attempting retry with existing connection.",
+                                    index_info.schema_name, index_info.index_name
+                                ),
+                            );
+                        }
+                    }
+                    
+                    // Wait before retrying
+                    tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
+                } else {
+                    // All retries exhausted
+                    logger.log_index_failed(
+                        &index_info.schema_name,
+                        &index_info.index_name,
+                        &format!("SQL execution failed after {:?} and {} retry attempts: {}", duration, MAX_RETRIES, e),
+                    );
+                    
+                    // Save failed reindex record
+                    let index_data = crate::save::IndexData {
+                        schema_name: index_info.schema_name.clone(),
+                        index_name: index_info.index_name.clone(),
+                        index_type: user_index_type.to_string(),
+                        reindex_status: crate::types::ReindexStatus::Failed,
+                        before_size: Some(before_size),
+                        after_size: None,
+                        size_change: None,
+                        reindex_duration: Some(((duration.as_secs_f64() * 10.0).round() / 10.0) as f32),
+                    };
+                    crate::save::save_index_info(&current_client, &index_data).await?;
+                    
+                    return Ok(crate::types::ReindexStatus::Failed);
+                }
+            }
         }
     }
+    
+    // If we get here, the reindex succeeded (we broke out of the loop)
+    // Update client reference for subsequent operations
+    let client = current_client;
 
     // Get after size
     let after_size =
