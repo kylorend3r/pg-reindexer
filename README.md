@@ -391,7 +391,7 @@ pg-reindexer --database db1,db2,db3 --schema public --threads 8 --maintenance-wo
 # Emergency operation (maximum safety)
 pg-reindexer --database mydb --schema public --threads 1 --maintenance-work-mem-gb 1 --max-parallel-maintenance-workers 1 --skip-inactive-replication-slots --skip-sync-replication-connection --skip-active-vacuums
 
-# Production with lock timeout protection
+# Production with lock timeout protection (automatic retries on lock timeout)
 pg-reindexer --database mydb --schema public --threads 2 --maintenance-work-mem-gb 2 --max-parallel-maintenance-workers 2 --lock-timeout-seconds 60
 
 # Production with SSL connection
@@ -721,6 +721,20 @@ Options:
 - **Per-Thread Validation**: Each thread performs fresh safety checks when it starts (no stale data)
 - **Orphaned Index Cleanup**: Automatically detects and optionally drops orphaned `_ccnew` indexes left behind by interrupted concurrent reindex operations
 
+### 🔄 **Automatic Retry Logic for Transient Errors**
+- **Intelligent Error Detection**: Automatically detects and retries transient errors that are safe to retry:
+  - **Lock Timeout Errors**: Retries when a reindex operation fails due to lock timeout (when `--lock-timeout-seconds` is set)
+  - **Deadlock Errors**: Retries when PostgreSQL detects a deadlock and rolls back the transaction
+  - **Connection Errors**: Retries when connection issues occur (connection closed, lost, reset, etc.)
+- **Automatic Retry Strategy**: Up to 3 additional retry attempts (4 total attempts) for transient errors
+- **Smart Connection Management**: 
+  - For connection errors: Creates a fresh database connection before retrying
+  - For lock timeout/deadlock: Reuses the existing connection (still valid after these errors)
+- **Configurable Delay**: 2-second delay between retry attempts to allow system recovery
+- **Comprehensive Logging**: Each retry attempt is logged with error type, attempt number, and retry delay
+- **Non-Retryable Errors**: Errors that are not transient (e.g., permission errors, invalid SQL) fail immediately without retries
+- **Production Ready**: Handles transient database issues gracefully without manual intervention
+
 ### 📊 **Intelligent Bloat Detection**
 - **Bloat Ratio Calculation**: Uses PostgreSQL's internal statistics to calculate index bloat percentage
 - **Threshold-Based Filtering**: Only reindex indexes that exceed the specified bloat threshold
@@ -777,10 +791,11 @@ The performance improvement becomes even more significant with larger numbers of
   - `maintenance_work_mem`: Control memory allocation for index operations (max: 32 GB)
   - `maintenance_io_concurrency`: Manage concurrent I/O operations (max: 512)
   - `max_parallel_maintenance_workers`: Control parallel worker count
-  - `lock_timeout`: Control how long to wait for locks before timing out (0 = no timeout)
+  - `lock_timeout`: Control how long to wait for locks before timing out (0 = no timeout). When set, the tool automatically retries on lock timeout errors
 - **Resource Management**: Balance performance vs. system resource consumption
 - **Smart Defaults**: Uses PostgreSQL defaults when parameters are set to 0
 - **Parallel Processing**: Process indexes on different tables simultaneously for maximum throughput
+- **Automatic Retry on Lock Timeout**: When `--lock-timeout-seconds` is configured, the tool automatically retries failed reindex operations up to 3 times, making it safe to use lock timeouts in production environments
 
 ### 🔒 **Secure Connections**
 - **SSL/TLS Support**: Encrypted connections to PostgreSQL servers using industry-standard TLS
@@ -821,13 +836,43 @@ CREATE TABLE reindexer.reindex_logbook (
 
 ### Logbook Status Values
 
-- `success`: Index was successfully reindexed and validated
+- `success`: Index was successfully reindexed and validated (may have been retried after transient errors)
 - `validation_failed`: Index reindexing completed but validation failed
-- `failed`: Index reindexing failed due to SQL errors, connection issues, or task panics
+- `failed`: Index reindexing failed after all retry attempts were exhausted. This includes:
+  - Non-retryable errors (e.g., permission errors, invalid SQL)
+  - Transient errors that failed after 4 total attempts (1 initial + 3 retries)
 - `skipped`: Index was skipped due to active vacuum, inactive replication slots, or sync replication
 - `below_bloat_threshold`: Index was skipped because its bloat ratio was below the specified threshold
 - `invalid_index`: Index was skipped because it was found to be invalid
 - `excluded`: Index was excluded from reindexing via the `--exclude-indexes` parameter
+
+### Error Handling and Retry Logic
+
+The tool automatically handles transient errors that are safe to retry:
+
+**Retryable Errors** (up to 3 additional attempts, 4 total):
+- **Lock Timeout**: When `--lock-timeout-seconds` is set and a reindex operation times out waiting for locks
+- **Deadlock**: When PostgreSQL detects a deadlock and automatically rolls back the transaction
+- **Connection Errors**: Transient connection issues (connection closed, lost, reset, broken pipe, etc.)
+
+**Non-Retryable Errors** (fail immediately):
+- Permission errors
+- Invalid SQL syntax
+- Index not found
+- Other permanent errors
+
+**Retry Behavior**:
+- Each retry attempt is logged with the error type and attempt number
+- 2-second delay between retry attempts to allow system recovery
+- For connection errors, a fresh database connection is created before retrying
+- For lock timeout and deadlock errors, the existing connection is reused (still valid)
+- After 4 failed attempts, the index is marked as `failed` in the logbook
+
+**Example Log Output**:
+```
+[WARNING] Reindex failed for public.users_email_idx due to lock timeout (attempt 1/4): canceling statement due to lock timeout. Retrying in 2 seconds...
+[INFO] Reindex SQL executed successfully for public.users_email_idx in 1.2s (attempt 2)
+```
 
 ## License
 
