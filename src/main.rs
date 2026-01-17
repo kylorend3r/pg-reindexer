@@ -6,6 +6,7 @@ use clap::Parser;
 use std::{collections::HashSet, sync::Arc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tokio::signal;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
@@ -1171,6 +1172,8 @@ async fn process_database(
     let start_time = std::time::Instant::now();
 
     let connection_string = Arc::new(connection_string);
+    let connection_string_for_cleanup = connection_string.clone();
+    let connection_config_for_cleanup = connection_config.clone();
 
     // Create shared memory table for index management
     let memory_table = Arc::new(memory_table::SharedIndexMemoryTable::new());
@@ -1203,6 +1206,102 @@ async fn process_database(
         .initialize_with_indexes(filtered_indexes.clone())
         .await;
 
+    // Create cancellation token for graceful shutdown
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+
+    // Spawn signal handler task for SIGINT (Ctrl+C), SIGTERM, and SIGHUP
+    let cancel_tx_signal = cancel_tx.clone();
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to listen for SIGTERM signal: {}", e);
+                    // Fall back to just SIGINT
+                    if let Err(e) = signal::ctrl_c().await {
+                        eprintln!("Failed to listen for Ctrl+C signal: {}", e);
+                    } else {
+                        let _ = cancel_tx_signal.send(true);
+                    }
+                    return;
+                }
+            };
+
+            // Try to set up SIGHUP handler (terminal close), but continue if it fails
+            let mut sighup_opt = signal(SignalKind::hangup()).ok();
+
+            if let Some(ref mut sighup) = sighup_opt {
+                tokio::select! {
+                    result = signal::ctrl_c() => {
+                        if let Err(e) = result {
+                            eprintln!("Failed to listen for Ctrl+C signal: {}", e);
+                            return;
+                        }
+                        // SIGINT received, set cancellation flag
+                        let _ = cancel_tx_signal.send(true);
+                    }
+                    result = sigterm.recv() => {
+                        match result {
+                            Some(_) => {
+                                // SIGTERM received, set cancellation flag
+                                let _ = cancel_tx_signal.send(true);
+                            }
+                            None => {
+                                eprintln!("SIGTERM signal stream closed");
+                            }
+                        }
+                    }
+                    result = sighup.recv() => {
+                        match result {
+                            Some(_) => {
+                                // SIGHUP received (terminal closed), set cancellation flag
+                                let _ = cancel_tx_signal.send(true);
+                            }
+                            None => {
+                                // SIGHUP stream closed, ignore
+                            }
+                        }
+                    }
+                }
+            } else {
+                // SIGHUP not available, use only SIGINT and SIGTERM
+                tokio::select! {
+                    result = signal::ctrl_c() => {
+                        if let Err(e) = result {
+                            eprintln!("Failed to listen for Ctrl+C signal: {}", e);
+                            return;
+                        }
+                        // SIGINT received, set cancellation flag
+                        let _ = cancel_tx_signal.send(true);
+                    }
+                    result = sigterm.recv() => {
+                        match result {
+                            Some(_) => {
+                                // SIGTERM received, set cancellation flag
+                                let _ = cancel_tx_signal.send(true);
+                            }
+                            None => {
+                                eprintln!("SIGTERM signal stream closed");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // On non-Unix systems, only handle Ctrl+C
+            if let Err(e) = signal::ctrl_c().await {
+                eprintln!("Failed to listen for Ctrl+C signal: {}", e);
+                return;
+            }
+            // Signal received, set cancellation flag
+            let _ = cancel_tx_signal.send(true);
+        }
+    });
+
     // Create worker configuration
     let worker_config = orchestrator::WorkerConfig {
         maintenance_work_mem_gb: args.maintenance_work_mem_gb,
@@ -1224,10 +1323,78 @@ async fn process_database(
     };
 
     // Create and spawn worker tasks
-    let tasks = orchestrator.create_worker_tasks(effective_threads, memory_table.clone(), worker_config);
+    let tasks = orchestrator.create_worker_tasks(
+        effective_threads,
+        memory_table.clone(),
+        worker_config,
+        cancel_rx.clone(),
+    );
 
     // Wait for all worker tasks to complete and collect results
-    let _error_count = orchestrator.collect_worker_results(tasks).await?;
+    let (error_count, was_cancelled) = orchestrator
+        .collect_worker_results(tasks, &cancel_rx)
+        .await?;
+
+    // Handle cancellation cleanup
+    if was_cancelled || *cancel_rx.borrow() {
+        logger_arc.log(
+            logging::LogLevel::Warning,
+            "Cancellation detected. Cleaning up state...",
+        );
+
+        // Reset in_progress indexes back to pending to allow resume
+        if let Some(ref sid) = session_id {
+            // Create a new connection for cleanup operations
+            let cleanup_client = create_connection_ssl(
+                &connection_string_for_cleanup,
+                connection_config_for_cleanup.ssl,
+                connection_config_for_cleanup.ssl_self_signed,
+                connection_config_for_cleanup.ssl_ca_cert.clone(),
+                connection_config_for_cleanup.ssl_client_cert.clone(),
+                connection_config_for_cleanup.ssl_client_key.clone(),
+                &logger_arc,
+            )
+            .await;
+
+            match cleanup_client {
+                Ok(client) => {
+                    match state::reset_in_progress_to_pending(&client, Some(sid)).await {
+                        Ok(count) => {
+                            if count > 0 {
+                                logger_arc.log(
+                                    logging::LogLevel::Info,
+                                    &format!(
+                                        "Reset {} in-progress index(es) back to pending state. You can resume with --resume flag.",
+                                        count
+                                    ),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            logger_arc.log(
+                                logging::LogLevel::Warning,
+                                &format!("Failed to reset in-progress indexes: {}", e),
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    logger_arc.log(
+                        logging::LogLevel::Warning,
+                        &format!("Failed to create connection for cleanup: {}", e),
+                    );
+                }
+            }
+        }
+
+        if !args.silence_mode {
+            println!("\n⚠️  Reindexing cancelled. Progress has been saved. Use --resume flag to continue.");
+        }
+        logger_arc.log(
+            logging::LogLevel::Warning,
+            "Reindexing cancelled by user. Use --resume flag to continue from where it left off.",
+        );
+    }
 
     // Get final statistics and log completion message
     orchestrator
@@ -1239,6 +1406,14 @@ async fn process_database(
             args.silence_mode,
         )
         .await;
+
+    // Return error if there were worker errors and not cancelled
+    if error_count > 0 && !was_cancelled && !*cancel_rx.borrow() {
+        return Err(anyhow::anyhow!(
+            "Reindexing completed with {} worker error(s)",
+            error_count
+        ));
+    }
 
     Ok(())
 }

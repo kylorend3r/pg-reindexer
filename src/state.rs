@@ -130,6 +130,41 @@ pub async fn mark_index_in_progress(
     Ok(())
 }
 
+/// Reset all in_progress indexes back to pending for a given session
+/// This is used during graceful cancellation to allow resume functionality
+pub async fn reset_in_progress_to_pending(
+    client: &Client,
+    session_id: Option<&str>,
+) -> Result<usize> {
+    let query = if let Some(_sid) = session_id {
+        r#"
+            UPDATE reindexer.reindex_state
+            SET state = 'pending', updated_at = CURRENT_TIMESTAMP
+            WHERE state = 'in_progress' AND session_id = $1
+        "#
+    } else {
+        r#"
+            UPDATE reindexer.reindex_state
+            SET state = 'pending', updated_at = CURRENT_TIMESTAMP
+            WHERE state = 'in_progress'
+        "#
+    };
+
+    let rows_affected = if let Some(sid) = session_id {
+        client
+            .execute(query, &[&sid])
+            .await
+            .context("Failed to reset in_progress indexes to pending")?
+    } else {
+        client
+            .execute(query, &[])
+            .await
+            .context("Failed to reset in_progress indexes to pending")?
+    };
+
+    Ok(rows_affected as usize)
+}
+
 // Removed load_pending_indexes as it's not currently used (resume now uses initialize_state_table directly)
 
 // Removed clear_completed_states as it's not currently used

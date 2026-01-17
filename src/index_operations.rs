@@ -207,6 +207,7 @@ pub async fn worker_with_memory_table(
     memory_table: Arc<SharedIndexMemoryTable>,
     logger: Arc<logging::Logger>,
     config: WorkerConfig,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     logger.log(
         logging::LogLevel::Info,
@@ -231,13 +232,65 @@ pub async fn worker_with_memory_table(
 
     let client = Arc::new(client);
 
-    // Process indexes until none are available
+    // Process indexes until none are available or cancellation is requested
     while memory_table.has_pending_indexes().await {
+        // Check for cancellation before acquiring new index
+        if *cancel_rx.borrow() {
+            logger.log(
+                logging::LogLevel::Info,
+                &format!("Worker {} received cancellation signal, stopping...", worker_id),
+            );
+            break;
+        }
+
         // Try to acquire an index
         if let Some(index_info) = memory_table
             .try_acquire_index_for_worker(worker_id, &logger)
             .await
         {
+            // Check cancellation again after acquiring index
+            if *cancel_rx.borrow() {
+                logger.log(
+                    logging::LogLevel::Info,
+                    &format!(
+                        "Worker {} received cancellation signal, releasing index {}.{}",
+                        worker_id, index_info.schema_name, index_info.index_name
+                    ),
+                );
+                
+                // Mark index back to pending in state table if session_id is provided
+                if let Some(ref _sid) = config.session_id {
+                    if let Err(e) = crate::state::update_index_state(
+                        &client,
+                        &index_info.schema_name,
+                        &index_info.index_name,
+                        &crate::state::ReindexState::Pending,
+                    )
+                    .await
+                    {
+                        logger.log(
+                            logging::LogLevel::Warning,
+                            &format!(
+                                "Failed to reset index {}.{} to pending in state table: {}",
+                                index_info.schema_name, index_info.index_name, e
+                            ),
+                        );
+                    }
+                }
+
+                // Release the index back to memory table
+                memory_table
+                    .release_index_and_mark_failed(
+                        &index_info.schema_name,
+                        &index_info.index_name,
+                        &index_info.table_name,
+                        worker_id,
+                        &logger,
+                    )
+                    .await;
+                
+                break;
+            }
             logger.log(
                 logging::LogLevel::Info,
                 &format!(
@@ -399,7 +452,22 @@ pub async fn worker_with_memory_table(
             }
         } else {
             // No available indexes, wait a bit before trying again
-            tokio::time::sleep(tokio::time::Duration::from_millis(DEFAULT_RETRY_DELAY_MS)).await;
+            // Check for cancellation during wait using select
+            tokio::select! {
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(DEFAULT_RETRY_DELAY_MS)) => {
+                    // Sleep completed, continue loop
+                }
+                _ = cancel_rx.changed() => {
+                    // Cancellation signal received
+                    if *cancel_rx.borrow() {
+                        logger.log(
+                            logging::LogLevel::Info,
+                            &format!("Worker {} received cancellation signal during wait, stopping...", worker_id),
+                        );
+                        break;
+                    }
+                }
+            }
         }
     }
 

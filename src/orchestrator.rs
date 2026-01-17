@@ -144,6 +144,7 @@ impl ReindexOrchestrator {
         effective_threads: usize,
         memory_table: Arc<memory_table::SharedIndexMemoryTable>,
         worker_config: WorkerConfig,
+        cancel_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Vec<tokio::task::JoinHandle<Result<()>>> {
         let mut tasks = Vec::new();
 
@@ -152,6 +153,7 @@ impl ReindexOrchestrator {
             let memory_table = memory_table.clone();
             let logger = self.logger.clone();
             let config = worker_config.clone();
+            let cancel_rx = cancel_rx.clone();
 
             let task = tokio::spawn(async move {
                 index_operations::worker_with_memory_table(
@@ -160,6 +162,7 @@ impl ReindexOrchestrator {
                     memory_table,
                     logger,
                     config,
+                    cancel_rx,
                 )
                 .await
             });
@@ -171,41 +174,79 @@ impl ReindexOrchestrator {
     }
 
     /// Wait for all worker tasks to complete and collect results
+    /// Returns Ok((error_count, was_cancelled)) where was_cancelled indicates if timeout occurred
     pub async fn collect_worker_results(
         &self,
         tasks: Vec<tokio::task::JoinHandle<Result<()>>>,
-    ) -> Result<usize> {
-        let mut error_count = 0;
+        cancel_rx: &tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(usize, bool)> {
+        // Default timeout: 30 seconds for graceful shutdown
+        const GRACEFUL_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
+        
+        let logger = self.logger.clone();
 
-        for (worker_id, task) in tasks.into_iter().enumerate() {
-            match task.await {
-                Ok(Ok(_)) => {
-                    // Worker completed successfully
-                    self.logger.log(
-                        logging::LogLevel::Info,
-                        &format!("Worker {} completed successfully", worker_id),
-                    );
-                }
-                Ok(Err(e)) => {
-                    error_count += 1;
-                    eprintln!("  ✗ Worker {} failed: {}", worker_id, e);
-                    self.logger.log(
-                        logging::LogLevel::Error,
-                        &format!("Worker {} failed: {}", worker_id, e),
-                    );
-                }
-                Err(e) => {
-                    error_count += 1;
-                    eprintln!("  ✗ Worker {} panicked: {}", worker_id, e);
-                    self.logger.log(
-                        logging::LogLevel::Error,
-                        &format!("Worker {} panicked: {}", worker_id, e),
-                    );
-                }
-            }
+        // Check if cancellation was already requested
+        if *cancel_rx.borrow() {
+            logger.log(
+                logging::LogLevel::Info,
+                "Cancellation requested, waiting for workers to complete gracefully...",
+            );
         }
 
-        Ok(error_count)
+        // Wait for all tasks with timeout
+        let result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(GRACEFUL_SHUTDOWN_TIMEOUT_SECS),
+            async {
+                let mut error_count = 0;
+                for (worker_id, task) in tasks.into_iter().enumerate() {
+                    match task.await {
+                        Ok(Ok(_)) => {
+                            // Worker completed successfully
+                            logger.log(
+                                logging::LogLevel::Info,
+                                &format!("Worker {} completed successfully", worker_id),
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            error_count += 1;
+                            eprintln!("  ✗ Worker {} failed: {}", worker_id, e);
+                            logger.log(
+                                logging::LogLevel::Error,
+                                &format!("Worker {} failed: {}", worker_id, e),
+                            );
+                        }
+                        Err(e) => {
+                            error_count += 1;
+                            eprintln!("  ✗ Worker {} panicked: {}", worker_id, e);
+                            logger.log(
+                                logging::LogLevel::Error,
+                                &format!("Worker {} panicked: {}", worker_id, e),
+                            );
+                        }
+                    }
+                }
+                error_count
+            },
+        )
+        .await;
+
+        match result {
+            Ok(error_count) => {
+                // All workers completed within timeout
+                Ok((error_count, false))
+            }
+            Err(_) => {
+                // Timeout occurred
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!(
+                        "Timeout waiting for workers to complete ({} seconds). Some operations may have been interrupted.",
+                        GRACEFUL_SHUTDOWN_TIMEOUT_SECS
+                    ),
+                );
+                Ok((0, true))
+            }
+        }
     }
 
     /// Get final statistics and log completion message
