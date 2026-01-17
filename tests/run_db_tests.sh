@@ -6,6 +6,7 @@
 #   ./tests/run_db_tests.sh --cli              # Run only CLI tests
 #   ./tests/run_db_tests.sh --db               # Run only DB tests
 #   ./tests/run_db_tests.sh --logging          # Run only logging/dry-run tests
+#   ./tests/run_db_tests.sh --signal           # Run only signal handling tests
 #   ./tests/run_db_tests.sh --all              # Run all tests (default)
 #   PG_PASSWORD=mypass ./tests/run_db_tests.sh --db
 
@@ -30,6 +31,7 @@ RUN_CLI=false
 RUN_DB=false
 RUN_LOGGING=false
 RUN_CHAOS=false
+RUN_SIGNAL=false
 RUN_ALL=true
 
 if [ $# -gt 0 ]; then
@@ -48,6 +50,9 @@ if [ $# -gt 0 ]; then
             --chaos|--chaos-tests)
                 RUN_CHAOS=true
                 ;;
+            --signal|--signal-handling)
+                RUN_SIGNAL=true
+                ;;
             --all)
                 RUN_ALL=true
                 ;;
@@ -59,6 +64,7 @@ if [ $# -gt 0 ]; then
                 echo "  --db, --db-validation      Run database integration tests only"
                 echo "  --logging, --dry-run      Run logging and dry-run tests only"
                 echo "  --chaos, --chaos-tests    Run chaos tests only (requires database)"
+                echo "  --signal, --signal-handling Run signal handling tests only"
                 echo "  --all                     Run all tests (default)"
                 echo "  --help, -h                Show this help message"
                 echo ""
@@ -73,6 +79,7 @@ if [ $# -gt 0 ]; then
                 echo "  $0 --cli                    # Run CLI tests only"
                 echo "  $0 --db                    # Run DB tests only"
                 echo "  $0 --chaos                 # Run chaos tests only"
+                echo "  $0 --signal                # Run signal handling tests only"
                 echo "  $0 --all                   # Run all tests"
                 echo "  PG_PASSWORD=mypass $0 --db # Run DB tests with custom password"
                 exit 0
@@ -87,7 +94,7 @@ if [ $# -gt 0 ]; then
 fi
 
 # If specific tests selected, don't run all
-if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ]; then
+if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ] || [ "$RUN_SIGNAL" = true ]; then
     RUN_ALL=false
 fi
 
@@ -100,11 +107,13 @@ if [ "$RUN_ALL" = true ]; then
     echo "  ✓ CLI Validation Tests"
     echo "  ✓ Database Integration Tests"
     echo "  ✓ Logging and Dry-Run Tests"
+    echo "  ✓ Signal Handling Tests"
     echo "  ✓ Chaos Tests"
 else
     [ "$RUN_CLI" = true ] && echo "  ✓ CLI Validation Tests"
     [ "$RUN_DB" = true ] && echo "  ✓ Database Integration Tests"
     [ "$RUN_LOGGING" = true ] && echo "  ✓ Logging and Dry-Run Tests"
+    [ "$RUN_SIGNAL" = true ] && echo "  ✓ Signal Handling Tests"
     [ "$RUN_CHAOS" = true ] && echo "  ✓ Chaos Tests"
 fi
 echo ""
@@ -196,6 +205,25 @@ if [ "$RUN_ALL" = true ] || [ "$RUN_LOGGING" = true ]; then
         echo -e "${RED}✗ Logging and Dry-Run Tests failed${NC}"
         OVERALL_SUCCESS=false
         FAILED_SUITES+=("Logging and Dry-Run")
+    fi
+    echo ""
+fi
+
+# Run Signal Handling Tests
+if [ "$RUN_ALL" = true ] || [ "$RUN_SIGNAL" = true ]; then
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Running Signal Handling Tests...${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    
+    if cargo test --test signal_handling -- --nocapture; then
+        echo ""
+        echo -e "${GREEN}✓ Signal Handling Tests passed!${NC}"
+    else
+        echo ""
+        echo -e "${RED}✗ Signal Handling Tests failed${NC}"
+        OVERALL_SUCCESS=false
+        FAILED_SUITES+=("Signal Handling")
     fi
     echo ""
 fi
