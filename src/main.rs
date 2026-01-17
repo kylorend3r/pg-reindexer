@@ -253,6 +253,14 @@ struct Args {
     )]
     order_by_size: Option<String>,
 
+    /// Ask for final confirmation with index count summary before proceeding
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Ask for final confirmation with a summary of indexes (count) before proceeding with reindexing"
+    )]
+    ask_confirmation: bool,
+
     /// Path to configuration file (TOML format). Configuration file values are overridden by CLI arguments.
     #[arg(
         short = 'C',
@@ -301,6 +309,7 @@ struct Config {
     resume: Option<bool>,
     silence_mode: Option<bool>,
     order_by_size: Option<String>,
+    ask_confirmation: Option<bool>,
 }
 
 /// Load configuration from a TOML file
@@ -498,8 +507,55 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
     if args.order_by_size.is_none() {
         args.order_by_size = config_file.order_by_size;
     }
+    if let Some(ask_conf) = config_file.ask_confirmation {
+        if args.ask_confirmation != ask_conf {
+            args.ask_confirmation = ask_conf;
+        }
+    }
 
     args
+}
+
+/// Ask user for confirmation before proceeding with reindexing
+/// Returns Ok(true) if user confirms, Ok(false) if user declines
+fn ask_user_confirmation(
+    index_count: usize,
+    schema_count: usize,
+    table_name: Option<&str>,
+) -> Result<bool> {
+    println!("\n═══════════════════════════════════════════════════════════");
+    println!("  REINDEXING CONFIRMATION");
+    println!("═══════════════════════════════════════════════════════════");
+    
+    if let Some(table) = table_name {
+        if schema_count == 1 {
+            println!("  Schema: 1");
+        } else {
+            println!("  Schemas: {}", schema_count);
+        }
+        println!("  Table: {}", table);
+    } else {
+        if schema_count == 1 {
+            println!("  Schema: 1");
+        } else {
+            println!("  Schemas: {}", schema_count);
+        }
+    }
+    println!("  Indexes to reindex: {}", index_count);
+    println!("═══════════════════════════════════════════════════════════");
+    print!("  Proceed with reindexing? [y/N]: ");
+    
+    // Flush stdout to ensure the prompt is displayed immediately
+    use std::io::Write;
+    std::io::stdout().flush().context("Failed to flush stdout")?;
+    
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .context("Failed to read user input")?;
+    
+    let trimmed = input.trim().to_lowercase();
+    Ok(trimmed == "y" || trimmed == "yes")
 }
 
 #[tokio::main]
@@ -1195,6 +1251,31 @@ async fn process_database(
     let filtered_indexes = orchestrator
         .process_and_filter_indexes(indexes, &excluded_indexes, args.index_type)
         .await?;
+
+    // Ask for confirmation if requested (skip for dry_run and silence_mode)
+    if args.ask_confirmation && !args.dry_run && !args.silence_mode {
+        let confirmed = ask_user_confirmation(
+            filtered_indexes.len(),
+            schemas.len(),
+            args.table.as_deref(),
+        )?;
+        
+        if !confirmed {
+            logger_arc.log(
+                logging::LogLevel::Info,
+                "Reindexing cancelled by user confirmation",
+            );
+            if !args.silence_mode {
+                println!("Reindexing cancelled by user.");
+            }
+            return Ok(());
+        }
+        
+        logger_arc.log(
+            logging::LogLevel::Info,
+            "User confirmed proceeding with reindexing",
+        );
+    }
 
     // Initialize state table if needed
     orchestrator
