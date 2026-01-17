@@ -755,6 +755,12 @@ Options:
 - **Failure Recovery**: Retries failed indexes from previous sessions when resuming
 - **Per-Database State**: Each database maintains its own state table, allowing independent resume operations
 
+### 🛑 **Graceful Cancellation**
+- **Signal Handling**: Supports SIGINT (Ctrl+C), SIGTERM (`kill <pid>`), and SIGHUP (terminal close) for graceful shutdown
+- **State Cleanup**: Automatically resets in-progress indexes to pending state on cancellation, enabling seamless resume
+- **Timeout-Based Shutdown**: Allows current operations to complete within 30 seconds before forcing termination
+- **No Data Loss**: Cancelled operations can be resumed with `--resume` flag without losing progress
+
 ### 🗄️ **Multiple Database Support**
 - **Batch Processing**: Process multiple databases in a single command execution
 - **Independent Processing**: Each database is processed sequentially with its own connection and state management
