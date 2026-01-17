@@ -1,4 +1,4 @@
-use crate::config::DEFAULT_RETRY_DELAY_MS;
+use crate::config::{DEFAULT_RETRY_DELAY_MS, MAX_REINDEX_RETRIES, REINDEX_RETRY_DELAY_SECS};
 use crate::logging;
 use crate::memory_table::SharedIndexMemoryTable;
 use crate::orchestrator::WorkerConfig;
@@ -567,9 +567,6 @@ pub async fn reindex_index_with_memory_table(
         ),
     );
 
-    const MAX_RETRIES: u32 = 3;
-    const RETRY_DELAY_SECS: u64 = 2;
-    
     // Clone connection parameters for use in retry loop
     let connection_string_clone = connection_string.clone();
     let worker_config_clone = worker_config.clone();
@@ -579,7 +576,7 @@ pub async fn reindex_index_with_memory_table(
     let mut duration = std::time::Duration::from_secs(0);
     
     // Retry loop: attempt up to 4 times (1 initial + 3 retries)
-    for attempt in 0..=MAX_RETRIES {
+    for attempt in 0..=MAX_REINDEX_RETRIES {
         let result = current_client.execute(&reindex_sql, &[]).await;
         duration = start_time.elapsed();
         
@@ -622,7 +619,7 @@ pub async fn reindex_index_with_memory_table(
                 }
                 
                 // Retryable error
-                if attempt < MAX_RETRIES {
+                if attempt < MAX_REINDEX_RETRIES {
                     let error_msg_lower = e.to_string().to_lowercase();
                     let error_type = if is_connection_error {
                         "connection error"
@@ -640,9 +637,9 @@ pub async fn reindex_index_with_memory_table(
                             index_info.index_name,
                             error_type,
                             attempt + 1,
-                            MAX_RETRIES + 1,
+                            MAX_REINDEX_RETRIES + 1,
                             e,
-                            RETRY_DELAY_SECS
+                            REINDEX_RETRY_DELAY_SECS
                         ),
                     );
                     
@@ -705,13 +702,13 @@ pub async fn reindex_index_with_memory_table(
                     }
                     
                     // Wait before retrying
-                    tokio::time::sleep(tokio::time::Duration::from_secs(RETRY_DELAY_SECS)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(REINDEX_RETRY_DELAY_SECS)).await;
                 } else {
                     // All retries exhausted
                     logger.log_index_failed(
                         &index_info.schema_name,
                         &index_info.index_name,
-                        &format!("SQL execution failed after {:?} and {} retry attempts: {}", duration, MAX_RETRIES, e),
+                        &format!("SQL execution failed after {:?} and {} retry attempts: {}", duration, MAX_REINDEX_RETRIES, e),
                     );
                     
                     // Save failed reindex record

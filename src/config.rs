@@ -24,6 +24,10 @@ pub const MILLISECONDS_PER_SECOND: u64 = 1000;
 pub const DEFAULT_DEADLOCK_TIMEOUT: &str = "1s";
 pub const DEFAULT_RETRY_DELAY_MS: u64 = 100;
 
+// Retry configuration for transient errors
+pub const MAX_REINDEX_RETRIES: u32 = 3; // Maximum number of retry attempts (4 total: 1 initial + 3 retries)
+pub const REINDEX_RETRY_DELAY_SECS: u64 = 2; // Delay in seconds between retry attempts
+
 // Bloat threshold limits
 pub const MIN_BLOAT_THRESHOLD_PERCENTAGE: u8 = 0;
 pub const MAX_BLOAT_THRESHOLD_PERCENTAGE: u8 = 100;
