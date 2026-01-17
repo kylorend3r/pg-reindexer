@@ -846,34 +846,6 @@ CREATE TABLE reindexer.reindex_logbook (
 - `invalid_index`: Index was skipped because it was found to be invalid
 - `excluded`: Index was excluded from reindexing via the `--exclude-indexes` parameter
 
-### Error Handling and Retry Logic
-
-The tool automatically handles transient errors that are safe to retry:
-
-**Retryable Errors** (up to 3 additional attempts, 4 total):
-- **Lock Timeout**: When `--lock-timeout-seconds` is set and a reindex operation times out waiting for locks
-- **Deadlock**: When PostgreSQL detects a deadlock and automatically rolls back the transaction
-- **Connection Errors**: Transient connection issues (connection closed, lost, reset, broken pipe, etc.)
-
-**Non-Retryable Errors** (fail immediately):
-- Permission errors
-- Invalid SQL syntax
-- Index not found
-- Other permanent errors
-
-**Retry Behavior**:
-- Each retry attempt is logged with the error type and attempt number
-- 2-second delay between retry attempts to allow system recovery
-- For connection errors, a fresh database connection is created before retrying
-- For lock timeout and deadlock errors, the existing connection is reused (still valid)
-- After 4 failed attempts, the index is marked as `failed` in the logbook
-
-**Example Log Output**:
-```
-[WARNING] Reindex failed for public.users_email_idx due to lock timeout (attempt 1/4): canceling statement due to lock timeout. Retrying in 2 seconds...
-[INFO] Reindex SQL executed successfully for public.users_email_idx in 1.2s (attempt 2)
-```
-
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
