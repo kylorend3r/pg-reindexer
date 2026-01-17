@@ -86,6 +86,9 @@ pg-reindexer --database mydb --schema public --order-by-size asc
 # Order indexes by size (largest first)
 pg-reindexer --database mydb --schema public --order-by-size desc
 
+# Ask for confirmation before proceeding with reindexing
+pg-reindexer --database mydb --schema public --ask-confirmation
+
 # SSL connection to remote PostgreSQL server
 pg-reindexer --database mydb --schema public --host your-postgres-server.com --ssl
 
@@ -493,6 +496,7 @@ ssl-self-signed = false
 resume = false
 silence-mode = false
 # order-by-size = "asc"  # "asc" or "desc"
+ask-confirmation = false
 ```
 
 ### Configuration File Examples
@@ -671,6 +675,7 @@ Options:
   -m, --max-size-gb <MAX_SIZE_GB>                      Maximum index size in GB. Indexes larger than this will be excluded from reindexing [default: 1024]
       --min-size-gb <MIN_SIZE_GB>                      Minimum index size in GB. Indexes smaller than this will be excluded from reindexing [default: 0]
       --order-by-size <ORDER>                          Order indexes by size: 'asc' for smallest first, 'desc' for largest first. If not specified, indexes are ordered ascending by default.
+      --ask-confirmation                                Ask for final confirmation with a summary of indexes (count) before proceeding with reindexing
       --index-type <INDEX_TYPE>                        Index type to reindex: 'btree' for regular b-tree indexes, 'constraint' for primary keys and unique constraints [default: btree]
   -w, --maintenance-work-mem-gb <MAINTENANCE_WORK_MEM_GB>  Maximum maintenance work mem in GB (max: 32 GB) [default: 1]
   -x, --max-parallel-maintenance-workers <MAX_PARALLEL_MAINTENANCE_WORKERS>  Maximum parallel maintenance workers. Must be less than max_parallel_workers/2 for safety. Use 0 for PostgreSQL default (typically 2) [default: 2]
