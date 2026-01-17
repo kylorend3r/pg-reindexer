@@ -26,7 +26,7 @@ pub const DEFAULT_RETRY_DELAY_MS: u64 = 100;
 
 // Retry configuration for transient errors
 pub const MAX_REINDEX_RETRIES: u32 = 3; // Maximum number of retry attempts (4 total: 1 initial + 3 retries)
-pub const REINDEX_RETRY_DELAY_SECS: u64 = 2; // Delay in seconds between retry attempts
+pub const REINDEX_RETRY_DELAY_SECS: u64 = 10; // Delay in seconds between retry attempts
 
 // Bloat threshold limits
 pub const MIN_BLOAT_THRESHOLD_PERCENTAGE: u8 = 0;
