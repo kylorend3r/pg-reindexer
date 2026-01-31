@@ -1,5 +1,5 @@
 use pg_reindexer::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
-use pg_reindexer::types::IndexFilterType;
+use pg_reindexer::types::{IndexFilterType, LogFormat};
 use pg_reindexer::{logging, memory_table, orchestrator, queries, schema, state, validation};
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -161,6 +161,15 @@ struct Args {
     )]
     log_file: String,
 
+    /// Log format: 'text' for human-readable output, 'json' for structured JSON output
+    #[arg(
+        long,
+        default_value = "text",
+        value_parser = clap::value_parser!(LogFormat),
+        help = "Log format: 'text' for human-readable output (default), 'json' for structured JSON output suitable for log aggregation systems"
+    )]
+    log_format: LogFormat,
+
     /// Reindex only indexes with bloat ratio above this percentage (0-100)
     #[arg(
         long,
@@ -305,6 +314,7 @@ struct Config {
     maintenance_io_concurrency: Option<u64>,
     lock_timeout_seconds: Option<u64>,
     log_file: Option<String>,
+    log_format: Option<String>,
     reindex_only_bloated: Option<u8>,
     concurrently: Option<bool>,
     clean_orphaned_indexes: Option<bool>,
@@ -460,6 +470,16 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
         // Only use config if CLI didn't override (default is "reindexer.log")
         if let Some(log_file) = config_file.log_file {
             args.log_file = log_file;
+        }
+    }
+
+    // Log format
+    if args.log_format == LogFormat::Text {
+        // Only use config if CLI didn't override (default is Text)
+        if let Some(ref log_format_str) = config_file.log_format {
+            if let Ok(log_format) = log_format_str.parse::<LogFormat>() {
+                args.log_format = log_format;
+            }
         }
     }
 
@@ -654,8 +674,8 @@ async fn main() -> Result<()> {
 
     // Index type validation is now handled by the enum's FromStr implementation
 
-    // Initialize logger with silence mode if enabled
-    let logger = logging::Logger::new_with_silence(args.log_file.clone(), args.silence_mode);
+    // Initialize logger with silence mode and log format
+    let logger = logging::Logger::new(args.log_file.clone(), args.silence_mode, args.log_format);
     let logger_arc = Arc::new(logger);
 
     // Print startup message (always visible, even in silence mode)

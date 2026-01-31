@@ -1020,9 +1020,9 @@ fn test_config_file_invalid_toml() {
         .suffix(".toml")
         .tempfile()
         .unwrap();
-    
+
     writeln!(config_file.as_file(), "invalid = toml = syntax").unwrap();
-    
+
     let config_path = config_file.path().to_str().unwrap();
     let mut cmd = get_cmd();
     cmd.arg("--config")
@@ -1032,6 +1032,119 @@ fn test_config_file_invalid_toml() {
         .failure()
         .stderr(predicate::str::contains("Failed to parse")
             .or(predicate::str::contains("TOML")));
+}
+
+// ============================================================================
+// Log format tests
+// ============================================================================
+
+#[test]
+fn test_help_contains_log_format() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--log-format"));
+}
+
+#[test]
+fn test_log_format_text_default() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--log-format")
+        .arg("text")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_format_json() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--log-format")
+        .arg("json")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_format_case_insensitive() {
+    for format_value in &["TEXT", "text", "Text", "JSON", "json", "Json"] {
+        let mut cmd = get_cmd();
+        cmd.arg("--schema")
+            .arg("public")
+            .arg("--log-format")
+            .arg(format_value)
+            .env_clear()
+            .assert()
+            .code(predicate::ne(101))
+            .code(predicate::ne(2));
+    }
+}
+
+#[test]
+fn test_log_format_invalid() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--log-format")
+        .arg("xml")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid log format")
+            .or(predicate::str::contains("invalid")));
+}
+
+#[test]
+fn test_log_format_with_silence_mode() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--log-format")
+        .arg("json")
+        .arg("--silence-mode")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_format_with_log_file() {
+    let log_file = NamedTempFile::new().unwrap();
+    let log_path = log_file.path().to_str().unwrap();
+
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--log-format")
+        .arg("json")
+        .arg("--log-file")
+        .arg(log_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_format_with_dry_run() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--log-format")
+        .arg("json")
+        .arg("--dry-run")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
 }
 
 
