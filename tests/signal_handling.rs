@@ -231,6 +231,7 @@ async fn test_cancellation_with_memory_table() {
             index_name: "test_index1".to_string(),
             index_type: "btree".to_string(),
             size_bytes: Some(1000),
+            parent_table_name: None,
         },
         IndexInfo {
             schema_name: "test_schema".to_string(),
@@ -238,6 +239,7 @@ async fn test_cancellation_with_memory_table() {
             index_name: "test_index2".to_string(),
             index_type: "btree".to_string(),
             size_bytes: Some(2000),
+            parent_table_name: None,
         },
     ];
     

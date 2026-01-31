@@ -261,6 +261,14 @@ struct Args {
     )]
     ask_confirmation: bool,
 
+    /// Include indexes from partitioned table partitions
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Include indexes from partitioned table partitions. When enabled, indexes from all partitions of partitioned tables will be collected and reindexed."
+    )]
+    include_partitions: bool,
+
     /// Path to configuration file (TOML format). Configuration file values are overridden by CLI arguments.
     #[arg(
         short = 'C',
@@ -310,6 +318,7 @@ struct Config {
     silence_mode: Option<bool>,
     order_by_size: Option<String>,
     ask_confirmation: Option<bool>,
+    include_partitions: Option<bool>,
 }
 
 /// Load configuration from a TOML file
@@ -510,6 +519,11 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
     if let Some(ask_conf) = config_file.ask_confirmation {
         if args.ask_confirmation != ask_conf {
             args.ask_confirmation = ask_conf;
+        }
+    }
+    if let Some(include_parts) = config_file.include_partitions {
+        if args.include_partitions != include_parts {
+            args.include_partitions = include_parts;
         }
     }
 
@@ -939,45 +953,92 @@ async fn process_database(
     let resume_manager = state::ResumeManager::new(&client, logger_arc.clone());
 
     // Generate session ID and handle resume logic
-    let session_id = resume_manager
-        .initialize_session(
-            args.resume,
-            &schemas,
-            || async {
-                pg_reindexer::index_operations::get_indexes_in_schemas(
-                    &client,
-                    &schemas,
-                    args.table.as_deref(),
-                    args.min_size_gb,
-                    args.max_size_gb,
-                    args.index_type,
-                    order_by_size_str,
-                )
-                .await
-            },
-        )
-        .await?;
+    let session_id = if args.include_partitions {
+        resume_manager
+            .initialize_session(
+                args.resume,
+                &schemas,
+                || async {
+                    pg_reindexer::index_operations::get_indexes_in_schemas_with_partitions(
+                        &client,
+                        &schemas,
+                        args.table.as_deref(),
+                        args.min_size_gb,
+                        args.max_size_gb,
+                        args.index_type,
+                        order_by_size_str,
+                        true,
+                        &logger_arc,
+                    )
+                    .await
+                },
+            )
+            .await?
+    } else {
+        resume_manager
+            .initialize_session(
+                args.resume,
+                &schemas,
+                || async {
+                    pg_reindexer::index_operations::get_indexes_in_schemas(
+                        &client,
+                        &schemas,
+                        args.table.as_deref(),
+                        args.min_size_gb,
+                        args.max_size_gb,
+                        args.index_type,
+                        order_by_size_str,
+                    )
+                    .await
+                },
+            )
+            .await?
+    };
 
     // Get indexes - when resuming, load from state table; otherwise discover from database
-    let indexes = resume_manager
-        .load_or_discover_indexes(
-            args.resume,
-            &schemas,
-            args.table.as_deref(),
-            || async {
-                pg_reindexer::index_operations::get_indexes_in_schemas(
-                    &client,
-                    &schemas,
-                    args.table.as_deref(),
-                    args.min_size_gb,
-                    args.max_size_gb,
-                    args.index_type,
-                    order_by_size_str,
-                )
-                .await
-            },
-        )
-        .await?;
+    let indexes = if args.include_partitions {
+        resume_manager
+            .load_or_discover_indexes(
+                args.resume,
+                &schemas,
+                args.table.as_deref(),
+                || async {
+                    pg_reindexer::index_operations::get_indexes_in_schemas_with_partitions(
+                        &client,
+                        &schemas,
+                        args.table.as_deref(),
+                        args.min_size_gb,
+                        args.max_size_gb,
+                        args.index_type,
+                        order_by_size_str,
+                        true,
+                        &logger_arc,
+                    )
+                    .await
+                },
+            )
+            .await?
+    } else {
+        resume_manager
+            .load_or_discover_indexes(
+                args.resume,
+                &schemas,
+                args.table.as_deref(),
+                || async {
+                    pg_reindexer::index_operations::get_indexes_in_schemas(
+                        &client,
+                        &schemas,
+                        args.table.as_deref(),
+                        args.min_size_gb,
+                        args.max_size_gb,
+                        args.index_type,
+                        order_by_size_str,
+                    )
+                    .await
+                },
+            )
+            .await?
+    };
 
     // Parse exclude-indexes if provided
     let excluded_indexes: HashSet<String> = if let Some(exclude_list) = &args.exclude_indexes {

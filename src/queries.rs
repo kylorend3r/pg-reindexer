@@ -190,17 +190,154 @@ pub const CHECK_TABLE_EXISTS: &str = r#"
 
 // Get all user schemas (excluding system schemas and tool-managed schemas)
 pub const GET_ALL_USER_SCHEMAS: &str = r#"
-    SELECT nspname 
-    FROM pg_namespace 
+    SELECT nspname
+    FROM pg_namespace
     WHERE nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'pg_temp_1', 'pg_toast_temp_1', 'reindexer')
     AND nspname NOT LIKE 'pg_temp_%'
     AND nspname NOT LIKE 'pg_toast_temp_%'
     ORDER BY nspname;
 "#;
 
+// Check if a table is partitioned (has child partitions)
+pub const CHECK_TABLE_IS_PARTITIONED: &str = r#"
+    SELECT EXISTS(
+        SELECT 1
+        FROM pg_inherits i
+        JOIN pg_class c ON c.oid = i.inhparent
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = $1
+        AND n.nspname = $2
+        AND c.relkind = 'p'
+    );
+"#;
+
+// Get all partitions of a partitioned table
+pub const GET_TABLE_PARTITIONS: &str = r#"
+    SELECT
+        child_ns.nspname as partition_schema,
+        child.relname as partition_name
+    FROM pg_inherits i
+    JOIN pg_class parent ON parent.oid = i.inhparent
+    JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
+    JOIN pg_class child ON child.oid = i.inhrelid
+    JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
+    WHERE parent.relname = $1
+    AND parent_ns.nspname = $2
+    AND parent.relkind = 'p'
+    ORDER BY child.relname;
+"#;
+
+// Get indexes for partitioned tables (includes partition indexes)
+// This query retrieves indexes from all partitions of a partitioned table
+pub const GET_PARTITIONED_TABLE_INDEXES: &str = r#"
+    WITH partition_tables AS (
+        SELECT
+            child_ns.nspname as partition_schema,
+            child.relname as partition_name,
+            child.oid as partition_oid
+        FROM pg_inherits i
+        JOIN pg_class parent ON parent.oid = i.inhparent
+        JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
+        JOIN pg_class child ON child.oid = i.inhrelid
+        JOIN pg_namespace child_ns ON child_ns.oid = child.relnamespace
+        WHERE parent.relname = $1
+        AND parent_ns.nspname = $2
+        AND parent.relkind = 'p'
+    )
+    SELECT
+        pt.partition_schema as schema_name,
+        pt.partition_name as table_name,
+        i.relname as index_name,
+        ROUND(pg_relation_size(i.oid)::numeric/(1024*1024*1024), 2) || ' GB' as index_size,
+        am.amname as index_type,
+        pg_relation_size(i.oid) as size_bytes,
+        $1 as parent_table_name
+    FROM partition_tables pt
+    JOIN pg_index x ON x.indrelid = pt.partition_oid
+    JOIN pg_class i ON i.oid = x.indexrelid
+    JOIN pg_am am ON am.oid = i.relam
+    WHERE i.relkind = 'i'
+    AND x.indisprimary = false
+    AND x.indisunique = false
+    ORDER BY pt.partition_name, pg_relation_size(i.oid) ASC;
+"#;
+
+// Check if any tables in a schema are partitioned
+pub const GET_PARTITIONED_TABLES_IN_SCHEMA: &str = r#"
+    SELECT
+        n.nspname as schema_name,
+        c.relname as table_name,
+        (SELECT COUNT(*) FROM pg_inherits WHERE inhparent = c.oid) as partition_count
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = $1
+    AND c.relkind = 'p'
+    ORDER BY c.relname;
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_check_table_is_partitioned_query_format() {
+        // Verify the CHECK_TABLE_IS_PARTITIONED query contains expected elements
+        assert!(
+            CHECK_TABLE_IS_PARTITIONED.contains("pg_inherits"),
+            "Query should use pg_inherits to detect partitioned tables"
+        );
+        assert!(
+            CHECK_TABLE_IS_PARTITIONED.contains("relkind = 'p'"),
+            "Query should filter for partitioned tables (relkind = 'p')"
+        );
+    }
+
+    #[test]
+    fn test_get_table_partitions_query_format() {
+        // Verify the GET_TABLE_PARTITIONS query contains expected elements
+        assert!(
+            GET_TABLE_PARTITIONS.contains("pg_inherits"),
+            "Query should use pg_inherits to find partitions"
+        );
+        assert!(
+            GET_TABLE_PARTITIONS.contains("partition_schema"),
+            "Query should return partition schema"
+        );
+        assert!(
+            GET_TABLE_PARTITIONS.contains("partition_name"),
+            "Query should return partition name"
+        );
+    }
+
+    #[test]
+    fn test_get_partitioned_table_indexes_query_format() {
+        // Verify the GET_PARTITIONED_TABLE_INDEXES query contains expected elements
+        assert!(
+            GET_PARTITIONED_TABLE_INDEXES.contains("partition_tables"),
+            "Query should use CTE for partition_tables"
+        );
+        assert!(
+            GET_PARTITIONED_TABLE_INDEXES.contains("parent_table_name"),
+            "Query should return parent_table_name"
+        );
+        assert!(
+            GET_PARTITIONED_TABLE_INDEXES.contains("size_bytes"),
+            "Query should return size_bytes"
+        );
+    }
+
+    #[test]
+    fn test_get_partitioned_tables_in_schema_query_format() {
+        // Verify the GET_PARTITIONED_TABLES_IN_SCHEMA query contains expected elements
+        assert!(
+            GET_PARTITIONED_TABLES_IN_SCHEMA.contains("relkind = 'p'"),
+            "Query should filter for partitioned tables"
+        );
+        assert!(
+            GET_PARTITIONED_TABLES_IN_SCHEMA.contains("partition_count"),
+            "Query should return partition count"
+        );
+    }
 
     #[test]
     fn test_build_indexes_query_ascending_order() {
