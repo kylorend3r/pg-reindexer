@@ -1,6 +1,8 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::sync::{Arc, Mutex};
+use serde::Serialize;
+use crate::types::LogFormat;
 
 #[derive(Debug, Clone, Copy)]
 pub enum LogLevel {
@@ -10,20 +12,103 @@ pub enum LogLevel {
     Success,
 }
 
+impl LogLevel {
+    fn as_str(&self) -> &'static str {
+        match self {
+            LogLevel::Info => "INFO",
+            LogLevel::Warning => "WARN",
+            LogLevel::Error => "ERROR",
+            LogLevel::Success => "SUCCESS",
+        }
+    }
+}
+
+/// Context for structured logging with optional fields
+#[derive(Default)]
+pub struct LogContext<'a> {
+    pub schema: Option<&'a str>,
+    pub index_name: Option<&'a str>,
+    pub index_type: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub duration_secs: Option<f64>,
+    pub total_indexes: Option<usize>,
+    pub current_index: Option<usize>,
+    pub failed_count: Option<usize>,
+    pub thread_count: Option<usize>,
+    pub error: Option<&'a str>,
+    pub maintenance_work_mem_gb: Option<u64>,
+    pub max_parallel_maintenance_workers: Option<u64>,
+    pub maintenance_io_concurrency: Option<u64>,
+    pub lock_timeout_seconds: Option<u64>,
+    pub min_size_gb: Option<u64>,
+    pub max_size_gb: Option<u64>,
+}
+
+/// JSON log event structure
+#[derive(Serialize)]
+struct LogEvent<'a> {
+    timestamp: &'a str,
+    level: &'a str,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schema: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index_name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index_type: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_secs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_indexes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failed_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thread_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maintenance_work_mem_gb: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_parallel_maintenance_workers: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maintenance_io_concurrency: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lock_timeout_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_size_gb: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_size_gb: Option<u64>,
+}
+
 // Buffer size for BufWriter (8KB default)
 const LOG_BUFFER_SIZE: usize = 8192;
 
 pub struct Logger {
     log_file: String,
     silence_mode: bool,
+    json_mode: bool,
     file_handle: Arc<Mutex<Option<BufWriter<File>>>>,
 }
 
 impl Logger {
+    pub fn new(log_file: String, silence_mode: bool, log_format: LogFormat) -> Self {
+        Self {
+            log_file,
+            silence_mode,
+            json_mode: log_format == LogFormat::Json,
+            file_handle: Arc::new(Mutex::new(None)),
+        }
+    }
+
     pub fn new_with_silence(log_file: String, silence_mode: bool) -> Self {
         Self {
             log_file,
             silence_mode,
+            json_mode: false,
             file_handle: Arc::new(Mutex::new(None)),
         }
     }
@@ -73,16 +158,43 @@ impl Logger {
     }
 
     pub fn log(&self, level: LogLevel, message: &str) {
+        self.log_with_context(level, message, LogContext::default());
+    }
+
+    pub fn log_with_context(&self, level: LogLevel, message: &str, context: LogContext<'_>) {
         // Format message before acquiring lock to minimize lock hold time
         let timestamp = self.get_timestamp();
-        let level_str = match level {
-            LogLevel::Info => "INFO",
-            LogLevel::Warning => "WARN",
-            LogLevel::Error => "ERROR",
-            LogLevel::Success => "SUCCESS",
-        };
+        let level_str = level.as_str();
 
-        let formatted_message = format!("[{}] [{}] {}\n", timestamp, level_str, message);
+        let formatted_message = if self.json_mode {
+            let event = LogEvent {
+                timestamp: &timestamp,
+                level: level_str,
+                message,
+                schema: context.schema,
+                index_name: context.index_name,
+                index_type: context.index_type,
+                status: context.status,
+                duration_secs: context.duration_secs,
+                total_indexes: context.total_indexes,
+                current_index: context.current_index,
+                failed_count: context.failed_count,
+                thread_count: context.thread_count,
+                error: context.error,
+                maintenance_work_mem_gb: context.maintenance_work_mem_gb,
+                max_parallel_maintenance_workers: context.max_parallel_maintenance_workers,
+                maintenance_io_concurrency: context.maintenance_io_concurrency,
+                lock_timeout_seconds: context.lock_timeout_seconds,
+                min_size_gb: context.min_size_gb,
+                max_size_gb: context.max_size_gb,
+            };
+            format!("{}\n", serde_json::to_string(&event).unwrap_or_else(|_| {
+                // Fallback to text format on serialization error
+                format!("{{\"timestamp\":\"{}\",\"level\":\"{}\",\"message\":\"{}\"}}", timestamp, level_str, message)
+            }))
+        } else {
+            format!("[{}] [{}] {}\n", timestamp, level_str, message)
+        };
 
         // Print to stdout only if not in silence mode
         if !self.silence_mode {
@@ -118,16 +230,43 @@ impl Logger {
 
     /// Log to both terminal and file (always prints, even in silence mode)
     pub fn log_always(&self, level: LogLevel, message: &str) {
+        self.log_always_with_context(level, message, LogContext::default());
+    }
+
+    /// Log to both terminal and file with context (always prints, even in silence mode)
+    pub fn log_always_with_context(&self, level: LogLevel, message: &str, context: LogContext<'_>) {
         // Format message before acquiring lock to minimize lock hold time
         let timestamp = self.get_timestamp();
-        let level_str = match level {
-            LogLevel::Info => "INFO",
-            LogLevel::Warning => "WARN",
-            LogLevel::Error => "ERROR",
-            LogLevel::Success => "SUCCESS",
-        };
+        let level_str = level.as_str();
 
-        let formatted_message = format!("[{}] [{}] {}\n", timestamp, level_str, message);
+        let formatted_message = if self.json_mode {
+            let event = LogEvent {
+                timestamp: &timestamp,
+                level: level_str,
+                message,
+                schema: context.schema,
+                index_name: context.index_name,
+                index_type: context.index_type,
+                status: context.status,
+                duration_secs: context.duration_secs,
+                total_indexes: context.total_indexes,
+                current_index: context.current_index,
+                failed_count: context.failed_count,
+                thread_count: context.thread_count,
+                error: context.error,
+                maintenance_work_mem_gb: context.maintenance_work_mem_gb,
+                max_parallel_maintenance_workers: context.max_parallel_maintenance_workers,
+                maintenance_io_concurrency: context.maintenance_io_concurrency,
+                lock_timeout_seconds: context.lock_timeout_seconds,
+                min_size_gb: context.min_size_gb,
+                max_size_gb: context.max_size_gb,
+            };
+            format!("{}\n", serde_json::to_string(&event).unwrap_or_else(|_| {
+                format!("{{\"timestamp\":\"{}\",\"level\":\"{}\",\"message\":\"{}\"}}", timestamp, level_str, message)
+            }))
+        } else {
+            format!("[{}] [{}] {}\n", timestamp, level_str, message)
+        };
 
         // Always print to stdout
         print!("{}", formatted_message);
@@ -167,41 +306,62 @@ impl Logger {
         index: &str,
         index_type: &str,
     ) {
-        self.log(
-            LogLevel::Info,
-            &format!(
-                "[{}/{}] Starting reindex: {}.{} ({})",
-                index_num + 1,
-                total,
-                schema,
-                index,
-                index_type
-            ),
+        let message = format!(
+            "[{}/{}] Starting reindex: {}.{} ({})",
+            index_num + 1,
+            total,
+            schema,
+            index,
+            index_type
         );
+        let context = LogContext {
+            schema: Some(schema),
+            index_name: Some(index),
+            index_type: Some(index_type),
+            status: Some("starting"),
+            current_index: Some(index_num + 1),
+            total_indexes: Some(total),
+            ..Default::default()
+        };
+        self.log_with_context(LogLevel::Info, &message, context);
     }
 
     pub fn log_index_success(&self, schema: &str, index: &str) {
-        self.log(
-            LogLevel::Success,
-            &format!("Reindexed {}.{} successfully", schema, index),
-        );
+        let message = format!("Reindexed {}.{} successfully", schema, index);
+        let context = LogContext {
+            schema: Some(schema),
+            index_name: Some(index),
+            status: Some("success"),
+            ..Default::default()
+        };
+        self.log_with_context(LogLevel::Success, &message, context);
     }
 
     pub fn log_index_validation_failed(&self, schema: &str, index: &str) {
-        self.log(
-            LogLevel::Error,
-            &format!(
-                "{}.{} - Index integrity check failed after reindexing",
-                schema, index
-            ),
+        let message = format!(
+            "{}.{} - Index integrity check failed after reindexing",
+            schema, index
         );
+        let context = LogContext {
+            schema: Some(schema),
+            index_name: Some(index),
+            status: Some("validation_failed"),
+            error: Some("Index integrity check failed after reindexing"),
+            ..Default::default()
+        };
+        self.log_with_context(LogLevel::Error, &message, context);
     }
 
     pub fn log_index_failed(&self, schema: &str, index: &str, reason: &str) {
-        self.log(
-            LogLevel::Error,
-            &format!("{}.{} - Reindex failed: {}", schema, index, reason),
-        );
+        let message = format!("{}.{} - Reindex failed: {}", schema, index, reason);
+        let context = LogContext {
+            schema: Some(schema),
+            index_name: Some(index),
+            status: Some("failed"),
+            error: Some(reason),
+            ..Default::default()
+        };
+        self.log_with_context(LogLevel::Error, &message, context);
     }
 
     pub fn log_completion_message(
@@ -216,10 +376,18 @@ impl Logger {
             "Reindexing completed: {} total indexes processed, {} failed, Duration: {:.2?} (using {} threads)",
             total, failed, duration, threads
         );
-        self.log_always(LogLevel::Success, &summary);
-        
-        // Also log detailed stats to file
-        if self.silence_mode {
+        let context = LogContext {
+            status: Some("completed"),
+            total_indexes: Some(total),
+            failed_count: Some(failed),
+            duration_secs: Some(duration.as_secs_f64()),
+            thread_count: Some(threads),
+            ..Default::default()
+        };
+        self.log_always_with_context(LogLevel::Success, &summary, context);
+
+        // Also log detailed stats to file (only in text mode for silence mode)
+        if self.silence_mode && !self.json_mode {
             self.log(
                 LogLevel::Info,
                 &format!("Total indexes processed: {}", total),
@@ -265,35 +433,31 @@ impl Logger {
         maintenance_io_concurrency: u64,
         lock_timeout_seconds: u64,
     ) {
-        self.log(
-            LogLevel::Info,
-            &format!("Maintenance work mem: {} GB", maintenance_work_mem_gb),
+        let message = format!(
+            "Session parameters: maintenance_work_mem={}GB, max_parallel_maintenance_workers={}, maintenance_io_concurrency={}, lock_timeout={}s",
+            maintenance_work_mem_gb, max_parallel_maintenance_workers, maintenance_io_concurrency, lock_timeout_seconds
         );
-        self.log(
-            LogLevel::Info,
-            &format!(
-                "Max parallel maintenance workers: {}",
-                max_parallel_maintenance_workers
-            ),
-        );
-        self.log(
-            LogLevel::Info,
-            &format!("Maintenance IO concurrency: {}", maintenance_io_concurrency),
-        );
-        self.log(
-            LogLevel::Info,
-            &format!("Lock timeout: {} seconds", lock_timeout_seconds),
-        );
+        let context = LogContext {
+            maintenance_work_mem_gb: Some(maintenance_work_mem_gb),
+            max_parallel_maintenance_workers: Some(max_parallel_maintenance_workers),
+            maintenance_io_concurrency: Some(maintenance_io_concurrency),
+            lock_timeout_seconds: Some(lock_timeout_seconds),
+            ..Default::default()
+        };
+        self.log_with_context(LogLevel::Info, &message, context);
     }
 
     pub fn log_index_size_limits(&self, min_size_gb: u64, max_size_gb: u64) {
-        self.log(
-            LogLevel::Info,
-            &format!(
-                "Index size limits: minimum {} GB, maximum {} GB",
-                min_size_gb, max_size_gb
-            ),
+        let message = format!(
+            "Index size limits: minimum {} GB, maximum {} GB",
+            min_size_gb, max_size_gb
         );
+        let context = LogContext {
+            min_size_gb: Some(min_size_gb),
+            max_size_gb: Some(max_size_gb),
+            ..Default::default()
+        };
+        self.log_with_context(LogLevel::Info, &message, context);
     }
 
 }
