@@ -5,6 +5,23 @@ pub struct IndexInfo {
     pub index_type: String,
     pub table_name: String,
     pub size_bytes: Option<i64>,
+    /// For partition indexes, this contains the parent partitioned table name
+    pub parent_table_name: Option<String>,
+}
+
+/// Information about a partitioned table
+#[derive(Debug, Clone)]
+pub struct PartitionedTableInfo {
+    pub schema_name: String,
+    pub table_name: String,
+    pub partition_count: i64,
+}
+
+/// Information about a table partition
+#[derive(Debug, Clone)]
+pub struct PartitionInfo {
+    pub schema_name: String,
+    pub partition_name: String,
 }
 
 #[derive(Debug, Clone)]

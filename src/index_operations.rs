@@ -2,7 +2,7 @@ use crate::config::{DEFAULT_RETRY_DELAY_MS, MAX_REINDEX_RETRIES, REINDEX_RETRY_D
 use crate::logging;
 use crate::memory_table::SharedIndexMemoryTable;
 use crate::orchestrator::WorkerConfig;
-use crate::types::{IndexInfo, IndexFilterType};
+use crate::types::{IndexInfo, IndexFilterType, PartitionedTableInfo, PartitionInfo};
 use anyhow::{Context, Result};
 use std::sync::Arc;
 
@@ -61,6 +61,7 @@ pub async fn get_indexes_in_schema(
             index_type: row.get(4),
             table_name: row.get(1),
             size_bytes: row.get(5), // size_bytes is now column 5
+            parent_table_name: None, // Regular indexes don't have a parent table
         };
         indexes.push(index);
     }
@@ -92,6 +93,315 @@ pub async fn get_indexes_in_schemas(
         )
         .await?;
         all_indexes.extend(indexes);
+    }
+
+    Ok(all_indexes)
+}
+
+/// Check if a table is partitioned (has child partitions)
+pub async fn is_table_partitioned(
+    client: &tokio_postgres::Client,
+    table_name: &str,
+    schema_name: &str,
+) -> Result<bool> {
+    let rows = client
+        .query(
+            crate::queries::CHECK_TABLE_IS_PARTITIONED,
+            &[&table_name, &schema_name],
+        )
+        .await
+        .context("Failed to check if table is partitioned")?;
+
+    if let Some(row) = rows.first() {
+        let is_partitioned: bool = row.get(0);
+        Ok(is_partitioned)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Get all partitions of a partitioned table
+pub async fn get_table_partitions(
+    client: &tokio_postgres::Client,
+    table_name: &str,
+    schema_name: &str,
+) -> Result<Vec<PartitionInfo>> {
+    let rows = client
+        .query(
+            crate::queries::GET_TABLE_PARTITIONS,
+            &[&table_name, &schema_name],
+        )
+        .await
+        .context("Failed to get table partitions")?;
+
+    let mut partitions = Vec::new();
+    for row in rows {
+        partitions.push(PartitionInfo {
+            schema_name: row.get(0),
+            partition_name: row.get(1),
+        });
+    }
+
+    Ok(partitions)
+}
+
+/// Get all partitioned tables in a schema
+pub async fn get_partitioned_tables_in_schema(
+    client: &tokio_postgres::Client,
+    schema_name: &str,
+) -> Result<Vec<PartitionedTableInfo>> {
+    let rows = client
+        .query(
+            crate::queries::GET_PARTITIONED_TABLES_IN_SCHEMA,
+            &[&schema_name],
+        )
+        .await
+        .context("Failed to get partitioned tables in schema")?;
+
+    let mut tables = Vec::new();
+    for row in rows {
+        tables.push(PartitionedTableInfo {
+            schema_name: row.get(0),
+            table_name: row.get(1),
+            partition_count: row.get(2),
+        });
+    }
+
+    Ok(tables)
+}
+
+/// Get indexes for all partitions of a partitioned table
+pub async fn get_partitioned_table_indexes(
+    client: &tokio_postgres::Client,
+    table_name: &str,
+    schema_name: &str,
+    min_size_gb: u64,
+    max_size_gb: u64,
+) -> Result<Vec<IndexInfo>> {
+    let rows = client
+        .query(
+            crate::queries::GET_PARTITIONED_TABLE_INDEXES,
+            &[&table_name, &schema_name],
+        )
+        .await
+        .context("Failed to get partitioned table indexes")?;
+
+    let min_size_bytes = min_size_gb as i64 * 1024 * 1024 * 1024;
+    let max_size_bytes = max_size_gb as i64 * 1024 * 1024 * 1024;
+
+    let mut indexes = Vec::new();
+    for row in rows {
+        let size_bytes: i64 = row.get(5);
+
+        // Apply size filter
+        if size_bytes >= min_size_bytes && size_bytes < max_size_bytes {
+            indexes.push(IndexInfo {
+                schema_name: row.get(0),
+                table_name: row.get(1),
+                index_name: row.get(2),
+                index_type: row.get(4),
+                size_bytes: Some(size_bytes),
+                parent_table_name: Some(row.get(6)),
+            });
+        }
+    }
+
+    Ok(indexes)
+}
+
+/// Get indexes including partition indexes for schemas
+/// When include_partitions is true, it will also collect indexes from partitioned table partitions
+pub async fn get_indexes_in_schema_with_partitions(
+    client: &tokio_postgres::Client,
+    schema_name: &str,
+    table_name: Option<&str>,
+    min_size_gb: u64,
+    max_size_gb: u64,
+    index_type: IndexFilterType,
+    order_by_size: Option<&str>,
+    include_partitions: bool,
+    logger: &crate::logging::Logger,
+) -> Result<Vec<IndexInfo>> {
+    let mut all_indexes = Vec::new();
+
+    // If a specific table is provided, check if it's partitioned
+    if let Some(table) = table_name {
+        if include_partitions && is_table_partitioned(client, table, schema_name).await? {
+            logger.log(
+                crate::logging::LogLevel::Info,
+                &format!(
+                    "Table '{}.{}' is partitioned, collecting indexes from all partitions",
+                    schema_name, table
+                ),
+            );
+
+            // Get partition info for logging
+            let partitions = get_table_partitions(client, table, schema_name).await?;
+            logger.log(
+                crate::logging::LogLevel::Info,
+                &format!(
+                    "Found {} partition(s) for table '{}.{}'",
+                    partitions.len(),
+                    schema_name,
+                    table
+                ),
+            );
+
+            // Get indexes from all partitions
+            let partition_indexes = get_partitioned_table_indexes(
+                client,
+                table,
+                schema_name,
+                min_size_gb,
+                max_size_gb,
+            )
+            .await?;
+
+            logger.log(
+                crate::logging::LogLevel::Info,
+                &format!(
+                    "Found {} index(es) across all partitions of '{}.{}'",
+                    partition_indexes.len(),
+                    schema_name,
+                    table
+                ),
+            );
+
+            all_indexes.extend(partition_indexes);
+        } else {
+            // Not partitioned or partitions not requested, get regular indexes
+            let indexes = get_indexes_in_schema(
+                client,
+                schema_name,
+                table_name,
+                min_size_gb,
+                max_size_gb,
+                index_type,
+                order_by_size,
+            )
+            .await?;
+            all_indexes.extend(indexes);
+        }
+    } else {
+        // No specific table, get all indexes in schema
+        // First get regular indexes
+        let indexes = get_indexes_in_schema(
+            client,
+            schema_name,
+            None,
+            min_size_gb,
+            max_size_gb,
+            index_type,
+            order_by_size,
+        )
+        .await?;
+        all_indexes.extend(indexes);
+
+        // If include_partitions is enabled, also get indexes from partitioned tables
+        if include_partitions {
+            let partitioned_tables = get_partitioned_tables_in_schema(client, schema_name).await?;
+
+            if !partitioned_tables.is_empty() {
+                logger.log(
+                    crate::logging::LogLevel::Info,
+                    &format!(
+                        "Found {} partitioned table(s) in schema '{}', collecting partition indexes",
+                        partitioned_tables.len(),
+                        schema_name
+                    ),
+                );
+
+                for pt in &partitioned_tables {
+                    logger.log(
+                        crate::logging::LogLevel::Info,
+                        &format!(
+                            "Processing partitioned table '{}.{}' with {} partition(s)",
+                            pt.schema_name, pt.table_name, pt.partition_count
+                        ),
+                    );
+
+                    let partition_indexes = get_partitioned_table_indexes(
+                        client,
+                        &pt.table_name,
+                        &pt.schema_name,
+                        min_size_gb,
+                        max_size_gb,
+                    )
+                    .await?;
+
+                    logger.log(
+                        crate::logging::LogLevel::Info,
+                        &format!(
+                            "Found {} index(es) across partitions of '{}.{}'",
+                            partition_indexes.len(),
+                            pt.schema_name,
+                            pt.table_name
+                        ),
+                    );
+
+                    all_indexes.extend(partition_indexes);
+                }
+            }
+        }
+    }
+
+    // Sort by size if requested
+    if let Some(order) = order_by_size {
+        match order {
+            "asc" => all_indexes.sort_by(|a, b| {
+                a.size_bytes.unwrap_or(0).cmp(&b.size_bytes.unwrap_or(0))
+            }),
+            "desc" => all_indexes.sort_by(|a, b| {
+                b.size_bytes.unwrap_or(0).cmp(&a.size_bytes.unwrap_or(0))
+            }),
+            _ => {}
+        }
+    }
+
+    Ok(all_indexes)
+}
+
+/// Get indexes from multiple schemas with partition support
+pub async fn get_indexes_in_schemas_with_partitions(
+    client: &tokio_postgres::Client,
+    schema_names: &[String],
+    table_name: Option<&str>,
+    min_size_gb: u64,
+    max_size_gb: u64,
+    index_type: IndexFilterType,
+    order_by_size: Option<&str>,
+    include_partitions: bool,
+    logger: &crate::logging::Logger,
+) -> Result<Vec<IndexInfo>> {
+    let mut all_indexes = Vec::new();
+
+    for schema_name in schema_names {
+        let indexes = get_indexes_in_schema_with_partitions(
+            client,
+            schema_name,
+            table_name,
+            min_size_gb,
+            max_size_gb,
+            index_type,
+            order_by_size,
+            include_partitions,
+            logger,
+        )
+        .await?;
+        all_indexes.extend(indexes);
+    }
+
+    // Re-sort after combining all schemas if order is specified
+    if let Some(order) = order_by_size {
+        match order {
+            "asc" => all_indexes.sort_by(|a, b| {
+                a.size_bytes.unwrap_or(0).cmp(&b.size_bytes.unwrap_or(0))
+            }),
+            "desc" => all_indexes.sort_by(|a, b| {
+                b.size_bytes.unwrap_or(0).cmp(&a.size_bytes.unwrap_or(0))
+            }),
+            _ => {}
+        }
     }
 
     Ok(all_indexes)
