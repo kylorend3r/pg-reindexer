@@ -37,7 +37,7 @@ cd pg-reindexer
 cargo build --release
 
 # Or download binary
-wget https://github.com/your-org/pg-reindexer/releases/latest/download/pg-reindexer-x86_64-unknown-linux-gnu
+wget https://github.com/kylorend3r/pg-reindexer/releases/latest/download/pg-reindexer-x86_64-unknown-linux-gnu
 chmod +x pg-reindexer-x86_64-unknown-linux-gnu
 ```
 
