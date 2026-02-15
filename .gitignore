@@ -14,6 +14,7 @@
 test_commands.sh
 reindexer.log
 QUICK_TEST_REFERENCE.md
+release-notes.md
 *.tar.gz
 
 # Binaries
@@ -25,6 +26,10 @@ QUICK_TEST_REFERENCE.md
 # Pgpass file
 .pgpass
 
+# Private scripts
+scripts/
+
 # Claude Code
 CLAUDE.md
 TODO.md
+RELEASE.md
