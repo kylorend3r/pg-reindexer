@@ -735,7 +735,7 @@ Options:
 - **Smart Connection Management**: 
   - For connection errors: Creates a fresh database connection before retrying
   - For lock timeout/deadlock: Reuses the existing connection (still valid after these errors)
-- **Configurable Delay**: 2-second delay between retry attempts to allow system recovery
+- **Configurable Delay**: 10-second delay between retry attempts to allow system recovery
 - **Comprehensive Logging**: Each retry attempt is logged with error type, attempt number, and retry delay
 - **Non-Retryable Errors**: Errors that are not transient (e.g., permission errors, invalid SQL) fail immediately without retries
 - **Production Ready**: Handles transient database issues gracefully without manual intervention

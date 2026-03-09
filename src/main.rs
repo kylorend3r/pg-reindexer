@@ -181,7 +181,7 @@ struct Args {
     /// Use CONCURRENTLY for online reindexing (default: true)
     #[arg(
         long,
-        default_value = "false",
+        default_value = "true",
         help = "Use REINDEX INDEX CONCURRENTLY for online reindexing. Set to false to use offline reindexing (REINDEX INDEX)."
     )]
     concurrently: bool,
