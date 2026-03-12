@@ -6,8 +6,19 @@ A high-performance, production-ready PostgreSQL index maintenance tool written i
 
 ![Reindexer](assets/reindex.gif)
 
+## Why pg-reindexer?
+
+- **No extensions, no dependencies** — works with any standard PostgreSQL installation (9.x+); no `pg_repack`, `pgstattuple`, or any other extension required
+- **Zero-dependency binary** — single static binary; no runtime, no package manager, no install scripts
+- **Zero-downtime reindexing** — uses `REINDEX INDEX CONCURRENTLY` by default so production traffic is unaffected
+- **Safe by default** — pre-flight safety checks (active vacuums, inactive replication slots, sync replication) block operations that could cause issues
+- **Resumable sessions** — interrupted runs are never wasted; `--resume` picks up exactly where it left off
+- **Fine-grained control** — bloat filtering, size limits, per-index exclusions, configurable parallelism, and maintenance memory settings
+- **Production-ready observability** — every operation logged to `reindexer.reindex_logbook` with before/after sizes and duration
+
 ## Table of Contents
 
+- [Why pg-reindexer?](#why-pg-reindexer)
 - [Quick Start](#quick-start)
 - [Usage Examples](#usage-examples)
 - [Configuration File](#configuration-file)
