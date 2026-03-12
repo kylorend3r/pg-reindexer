@@ -588,9 +588,10 @@ pub async fn worker_with_memory_table(
                     }
                 }
 
-                // Release the index back to memory table
+                // Release the index back to memory table as skipped (not failed —
+                // it was never processed, only cancelled before starting)
                 memory_table
-                    .release_index_and_mark_failed(
+                    .release_index_and_mark_skipped(
                         &index_info.schema_name,
                         &index_info.index_name,
                         &index_info.table_name,
@@ -598,7 +599,7 @@ pub async fn worker_with_memory_table(
                         &logger,
                     )
                     .await;
-                
+
                 break;
             }
             logger.log(
