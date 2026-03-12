@@ -1279,6 +1279,24 @@ pub async fn save_excluded_indexes_to_logbook(
                     ),
                 );
             }
+
+            // Mark as skipped in state table so resume mode doesn't re-queue it
+            if let Err(e) = crate::state::update_index_state(
+                client,
+                &index.schema_name,
+                &index.index_name,
+                &crate::state::ReindexState::Skipped,
+            )
+            .await
+            {
+                logger.log(
+                    logging::LogLevel::Warning,
+                    &format!(
+                        "Failed to update state for excluded index {}.{}: {}",
+                        index.schema_name, index.index_name, e
+                    ),
+                );
+            }
         }
     }
     Ok(())
