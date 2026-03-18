@@ -35,7 +35,8 @@ jobs:
         if: matrix.asset_name == 'rhel'
         run: |
           dnf install -y git gcc openssl-devel pkg-config
-          echo "PKG_CONFIG_PATH=/usr/lib64/pkgconfig" >> $GITHUB_ENV
+          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=/usr/lib64" >> $GITHUB_ENV
 
       - uses: actions/checkout@v4
 
