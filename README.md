@@ -1,4 +1,6 @@
 [![Pg-Reindexer CI](https://github.com/kylorend3r/pg-reindexer/actions/workflows/rust.yml/badge.svg)](https://github.com/kylorend3r/pg-reindexer/actions/workflows/rust.yml)
+[![Release](https://github.com/kylorend3r/pg-reindexer/actions/workflows/release.yml/badge.svg)](https://github.com/kylorend3r/pg-reindexer/actions/workflows/release.yml)
+[![Security Audit](https://github.com/kylorend3r/pg-reindexer/actions/workflows/security.yml/badge.svg)](https://github.com/kylorend3r/pg-reindexer/actions/workflows/security.yml)
 
 # PostgreSQL Reindexer
 
