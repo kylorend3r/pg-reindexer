@@ -9,20 +9,32 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.asset_name }}
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
+            asset_name: linux-musl
           - target: x86_64-apple-darwin
             runner: macos-latest
+            asset_name: macos-x86_64
           - target: aarch64-apple-darwin
             runner: macos-latest
+            asset_name: macos-arm64
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            asset_name: rhel
+            container: rockylinux:8
 
     steps:
+      - name: Install RHEL build dependencies
+        if: matrix.asset_name == 'rhel'
+        run: dnf install -y git gcc openssl-devel pkg-config
+
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
@@ -50,10 +62,10 @@ jobs:
 
       - name: Archive binary
         run: |
-          tar -czf pg-reindexer-${{ matrix.target }}.tar.gz \
+          tar -czf pg-reindexer-${{ matrix.asset_name }}-${{ github.ref_name }}.tar.gz \
             -C target/${{ matrix.target }}/release pg-reindexer
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: pg-reindexer-${{ matrix.target }}.tar.gz
+          files: pg-reindexer-${{ matrix.asset_name }}-${{ github.ref_name }}.tar.gz
