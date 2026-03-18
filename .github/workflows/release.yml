@@ -33,7 +33,9 @@ jobs:
     steps:
       - name: Install RHEL build dependencies
         if: matrix.asset_name == 'rhel'
-        run: dnf install -y git gcc openssl-devel pkg-config
+        run: |
+          dnf install -y git gcc openssl-devel pkg-config
+          echo "PKG_CONFIG_PATH=/usr/lib64/pkgconfig" >> $GITHUB_ENV
 
       - uses: actions/checkout@v4
 
