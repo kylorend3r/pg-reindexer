@@ -18,8 +18,25 @@ A high-performance, production-ready PostgreSQL index maintenance tool written i
 - **Fine-grained control** — bloat filtering, size limits, per-index exclusions, configurable parallelism, and maintenance memory settings
 - **Production-ready observability** — every operation logged to `reindexer.reindex_logbook` with before/after sizes and duration
 
+## Who Is This For?
+
+pg-reindexer is built for **DBAs, SREs, and backend engineers** who manage PostgreSQL in production and need a safe, automated way to keep indexes healthy — without downtime, without extensions, and without complex setup.
+
+It's a particularly good fit if you are:
+
+- **Running PostgreSQL on a managed cloud service** (AWS RDS, Aurora, Google Cloud SQL, Supabase, Neon, etc.) where `pg_repack` and other extension-based tools are unavailable or require elevated privileges you don't have. pg-reindexer uses only standard SQL and works out of the box on any managed Postgres.
+
+- **Running PostgreSQL on-premises** and want a maintenance tool you can drop onto any server as a single binary — no runtime, no package manager, no install scripts. Copy it, run it, done. Full `.pgpass`, SSL/TLS, and custom CA certificate support covers the typical on-prem setup.
+
+- **A small team without a dedicated DBA** who needs safe, automated index maintenance but doesn't have the expertise to write and maintain custom reindexing scripts. The pre-flight safety checks, retry logic, and replication awareness handle the hard parts for you.
+
+- **An infrastructure or platform engineer** who wants to run index maintenance as a scheduled job or CI/CD pipeline step. The `--silence-mode`, `--dry-run`, JSON log output, and single-binary distribution make it straightforward to integrate into any automation stack.
+
+- **Anyone hitting index bloat** on large tables where `REINDEX` without `CONCURRENTLY` would lock the table and take down your application. pg-reindexer defaults to `REINDEX INDEX CONCURRENTLY` so production traffic is never blocked.
+
 ## Table of Contents
 
+- [Who Is This For?](#who-is-this-for)
 - [Why pg-reindexer?](#why-pg-reindexer)
 - [Quick Start](#quick-start)
 - [Usage Examples](#usage-examples)
@@ -107,7 +124,7 @@ skip-active-vacuums = false
 max-size-gb = 1024
 min-size-gb = 0
 
-# Index type: "btree", "constraint"
+# Index type: "btree", "constraint", or "all"
 index-type = "btree"
 
 # Maintenance settings
@@ -190,12 +207,13 @@ Options:
       --min-size-gb <MIN_SIZE_GB>                       Minimum index size in GB [default: 0]
       --order-by-size <ORDER>                           Order by size: 'asc' or 'desc'
       --ask-confirmation                                Ask for confirmation before proceeding
-      --index-type <INDEX_TYPE>                         'btree' or 'constraint' [default: btree]
+      --index-type <INDEX_TYPE>                         'btree', 'constraint', or 'all' [default: btree]
   -w, --maintenance-work-mem-gb <GB>                    Maintenance work mem in GB (max: 32) [default: 1]
   -x, --max-parallel-maintenance-workers <N>            Parallel maintenance workers [default: 2]
   -c, --maintenance-io-concurrency <N>                  Maintenance IO concurrency [default: 10]
       --lock-timeout-seconds <N>                        Lock timeout in seconds, 0 = no timeout [default: 0]
   -l, --log-file <LOG_FILE>                             Log file path [default: reindexer.log]
+      --log-format <FORMAT>                             Log format: 'text' or 'json' [default: text]
       --reindex-only-bloated <PERCENTAGE>               Only reindex indexes with bloat above this %
       --concurrently                                    Use REINDEX CONCURRENTLY (online) [default: true]
       --clean-orphaned-indexes                          Drop orphaned _ccnew indexes before starting

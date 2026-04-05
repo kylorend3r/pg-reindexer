@@ -84,7 +84,7 @@ pub enum IndexFilterType {
     Btree,
     /// Filter for constraint indexes (primary keys and unique constraints) only
     Constraint,
-    /// Include all index types
+    /// All non-constraint indexes regardless of access method (excludes primary keys and unique indexes)
     All,
 }
 
