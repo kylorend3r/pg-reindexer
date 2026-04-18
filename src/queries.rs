@@ -121,6 +121,18 @@ pub const GET_SYNC_REPLICATION_CONNECTION_COUNT: &str = r#"
     SELECT COUNT(*) FROM pg_stat_replication WHERE sync_state = 'sync';
 "#;
 
+/// Returns the maximum replication lag in bytes across all connected standbys.
+/// Uses pg_wal_lsn_diff(sent_lsn, replay_lsn) which reflects WAL sent but not yet replayed.
+/// Returns 0 when there are no replicas or all replay_lsn values are NULL.
+pub const GET_MAX_REPLICA_LAG_BYTES: &str = r#"
+    SELECT COALESCE(
+        MAX(pg_wal_lsn_diff(sent_lsn, replay_lsn)),
+        0
+    )::bigint
+    FROM pg_stat_replication
+    WHERE replay_lsn IS NOT NULL
+"#;
+
 // Session parameter queries
 pub const SET_STATEMENT_TIMEOUT: &str = "SET statement_timeout TO 0";
 pub const SET_IDLE_SESSION_TIMEOUT: &str = "SET idle_session_timeout TO 0";

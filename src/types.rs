@@ -263,6 +263,16 @@ impl IndexMemoryTable {
             .collect()
     }
 
+    /// Marks all remaining Pending entries as Skipped.
+    /// Safe to call only after all workers have returned (no active writers).
+    pub fn mark_all_pending_skipped(&mut self) {
+        for entry in self.indexes.values_mut() {
+            if entry.status == IndexStatus::Pending {
+                entry.status = IndexStatus::Skipped;
+            }
+        }
+    }
+
     pub fn get_statistics(&self) -> (usize, usize, usize, usize, usize) {
         let mut pending = 0;
 

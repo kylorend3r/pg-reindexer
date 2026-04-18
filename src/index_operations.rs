@@ -1,10 +1,15 @@
+use crate::checks;
 use crate::config::{DEFAULT_RETRY_DELAY_MS, MAX_REINDEX_RETRIES, REINDEX_RETRY_DELAY_SECS};
 use crate::logging;
 use crate::memory_table::SharedIndexMemoryTable;
 use crate::orchestrator::WorkerConfig;
-use crate::types::{IndexInfo, IndexFilterType, PartitionedTableInfo, PartitionInfo};
+use crate::types::{IndexFilterType, IndexInfo, PartitionInfo, PartitionedTableInfo};
 use anyhow::{Context, Result};
 use std::sync::Arc;
+
+const REPLICA_LAG_BACKOFF_MS: u64 = 5_000;
+const REPLICA_LAG_WARN_INTERVAL_SECS: u64 = 60;
+const DEFAULT_REPLICA_LAG_WAIT_SECS: u64 = 1_800;
 
 /// Check if an index name matches PostgreSQL's temporary concurrent reindex pattern
 /// This matches names like "_ccnew", "_ccnew1", "_ccnew2", etc.
@@ -542,6 +547,8 @@ pub async fn worker_with_memory_table(
 
     let client = Arc::new(client);
 
+    let mut lag_throttle_start: Option<std::time::Instant> = None;
+
     // Process indexes until none are available or cancellation is requested
     while memory_table.has_pending_indexes().await {
         // Check for cancellation before acquiring new index
@@ -551,6 +558,58 @@ pub async fn worker_with_memory_table(
                 &format!("Worker {} received cancellation signal, stopping...", worker_id),
             );
             break;
+        }
+
+        // Replica lag throttle: pause acquisition when lag exceeds threshold
+        if let Some(max_lag) = config.max_replica_lag_bytes {
+            match checks::get_max_replica_lag_bytes(&client).await {
+                Ok(lag) if lag > max_lag => {
+                    let started = lag_throttle_start.get_or_insert_with(std::time::Instant::now);
+                    let waited_secs = started.elapsed().as_secs();
+                    let hard_limit = config
+                        .max_replica_lag_wait_secs
+                        .unwrap_or(DEFAULT_REPLICA_LAG_WAIT_SECS);
+                    if waited_secs >= hard_limit {
+                        logger.log(
+                            logging::LogLevel::Error,
+                            &format!(
+                                "[worker {}] replica lag has exceeded threshold for {}s (limit: {}s) — \
+                                 stopping worker; remaining indexes will be marked skipped",
+                                worker_id, waited_secs, hard_limit
+                            ),
+                        );
+                        break;
+                    }
+                    if waited_secs == 0 || waited_secs % REPLICA_LAG_WARN_INTERVAL_SECS == 0 {
+                        logger.log(
+                            logging::LogLevel::Warning,
+                            &format!(
+                                "[worker {}] replica lag {} bytes exceeds threshold {} bytes — \
+                                 acquisition paused (waited {}s / {}s limit)",
+                                worker_id, lag, max_lag, waited_secs, hard_limit
+                            ),
+                        );
+                    }
+                    tokio::select! {
+                        _ = tokio::time::sleep(tokio::time::Duration::from_millis(REPLICA_LAG_BACKOFF_MS)) => {}
+                        _ = cancel_rx.changed() => { break; }
+                    }
+                    continue;
+                }
+                Ok(_) => {
+                    lag_throttle_start = None;
+                }
+                Err(e) => {
+                    lag_throttle_start = None;
+                    logger.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "[worker {}] could not read replica lag: {} — proceeding without throttle",
+                            worker_id, e
+                        ),
+                    );
+                }
+            }
         }
 
         // Try to acquire an index
