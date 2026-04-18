@@ -96,14 +96,26 @@ impl ConnectionConfig {
     pub fn build_connection_string(&self) -> String {
         let mut connection_string = format!(
             "host={} port={} dbname={} user={}",
-            self.host, self.port, self.database, self.username
+            escape_libpq_value(&self.host),
+            self.port,
+            escape_libpq_value(&self.database),
+            escape_libpq_value(&self.username),
         );
 
         if let Some(ref pwd) = self.password {
-            connection_string.push_str(&format!(" password={}", pwd));
+            connection_string.push_str(&format!(" password={}", escape_libpq_value(pwd)));
         }
 
         connection_string
+    }
+}
+
+fn escape_libpq_value(s: &str) -> String {
+    if s.chars().any(|c| c.is_whitespace() || c == '\'' || c == '\\') {
+        let escaped = s.replace('\\', "\\\\").replace('\'', "\\'");
+        format!("'{}'", escaped)
+    } else {
+        s.to_owned()
     }
 }
 
@@ -397,4 +409,39 @@ pub async fn create_connection_with_session_parameters_ssl(
     .await?;
 
     Ok(client)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_libpq_value;
+
+    #[test]
+    fn plain_alphanumeric_is_unchanged() {
+        assert_eq!(escape_libpq_value("mypassword123"), "mypassword123");
+    }
+
+    #[test]
+    fn password_with_space_is_quoted() {
+        assert_eq!(escape_libpq_value("my password"), "'my password'");
+    }
+
+    #[test]
+    fn password_with_single_quote_is_escaped() {
+        assert_eq!(escape_libpq_value("it's"), "'it\\'s'");
+    }
+
+    #[test]
+    fn password_with_backslash_is_escaped() {
+        assert_eq!(escape_libpq_value("pass\\word"), "'pass\\\\word'");
+    }
+
+    #[test]
+    fn password_with_space_and_quote_is_fully_escaped() {
+        assert_eq!(escape_libpq_value("it's alive"), "'it\\'s alive'");
+    }
+
+    #[test]
+    fn empty_string_is_unchanged() {
+        assert_eq!(escape_libpq_value(""), "");
+    }
 }
