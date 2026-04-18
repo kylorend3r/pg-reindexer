@@ -32,6 +32,7 @@ pub struct WorkerConfig {
     pub session_id: Option<String>,
     pub max_replica_lag_bytes: Option<i64>,
     pub max_replica_lag_wait_secs: Option<u64>,
+    pub pacing_ms: u64,
 }
 
 /// Orchestrator for managing reindexing operations
