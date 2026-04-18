@@ -16,6 +16,8 @@ A high-performance, production-ready PostgreSQL index maintenance tool written i
 - **Safe by default** — pre-flight safety checks (active vacuums, inactive replication slots, sync replication) block operations that could cause issues
 - **Resumable sessions** — interrupted runs are never wasted; `--resume` picks up exactly where it left off
 - **Fine-grained control** — bloat filtering, size limits, per-index exclusions, configurable parallelism, and maintenance memory settings
+- **Replica lag awareness** — adaptive throttling pauses index acquisition when replication lag exceeds a configured threshold, protecting standbys automatically
+- **Pre-flight planning** — `plan` subcommand produces a ranked, read-only index worklist (JSON or CSV) so you can review what will be reindexed before touching the database
 - **Production-ready observability** — every operation logged to `reindexer.reindex_logbook` with before/after sizes and duration
 
 ## Who Is This For?
@@ -40,6 +42,9 @@ It's a particularly good fit if you are:
 - [Why pg-reindexer?](#why-pg-reindexer)
 - [Quick Start](#quick-start)
 - [Usage Examples](#usage-examples)
+- [Plan Subcommand](#plan-subcommand)
+- [Adaptive Replica Lag Throttling](#adaptive-replica-lag-throttling)
+- [Pacing](#pacing)
 - [Configuration File](#configuration-file)
 - [Environment Variables](#environment-variables)
 - [Command Line Interface](#command-line-interface)
@@ -80,7 +85,126 @@ pg-reindexer --database mydb --schema public --host prod-db.company.com --ssl --
 
 # Resume an interrupted session in silence mode
 pg-reindexer --database mydb --schema public --resume --silence-mode
+
+# Preview ranked index worklist before reindexing (no DB writes)
+pg-reindexer plan --database mydb --schema public --sort-by bloat,size --format json
+
+# Throttle acquisition when replica lag exceeds 500 MB, stop after 30 minutes
+pg-reindexer --database mydb --schema public --max-replica-lag-bytes 524288000 --max-replica-lag-wait-secs 1800
+
+# Add 50ms pacing between acquisitions to reduce platform pressure
+pg-reindexer --database mydb --schema public --pacing-ms 50
 ```
+
+## Plan Subcommand
+
+The `plan` subcommand connects to PostgreSQL, queries index metadata, and outputs a ranked worklist — **without writing anything to the database**. Use it to review which indexes will be reindexed and in what order before running the actual operation.
+
+```bash
+# JSON output ranked by bloat (default)
+pg-reindexer plan --database mydb --schema public
+
+# Multi-criteria ranking: bloat first, then size as tiebreaker
+pg-reindexer plan --database mydb --schema public --sort-by bloat,size
+
+# CSV output to file
+pg-reindexer plan --database mydb --schema public --sort-by size --format csv --output /tmp/plan.csv
+
+# Discover all schemas
+pg-reindexer plan --database mydb --discover-all-schemas --sort-by age
+```
+
+### Sort Criteria
+
+| Criterion | Description |
+|-----------|-------------|
+| `bloat` | Estimated bloat percentage (highest bloat ranked first) |
+| `size` | Physical index size in bytes (largest first) |
+| `scan-frequency` | Indexes scanned least frequently ranked first |
+| `age` | Indexes not scanned for the longest time ranked first; never-scanned indexes rank highest |
+
+Multiple criteria can be combined with a comma (`--sort-by bloat,size`). Each criterion is normalized to `[0, 1]` and the scores are summed to produce the final rank.
+
+### Plan Output Shape (JSON)
+
+```json
+[
+  {
+    "rank": 1,
+    "schema_name": "public",
+    "table_name": "orders",
+    "index_name": "orders_created_at_idx",
+    "index_type": "btree",
+    "size_bytes": 45678592,
+    "size_pretty": "43 MB",
+    "scan_count": 12,
+    "last_scan": "2026-01-05T14:22:00Z",
+    "estimated_bloat_percent": 38.5
+  }
+]
+```
+
+### Plan Options
+
+```
+  -H, --host <HOST>               PostgreSQL host
+  -p, --port <PORT>               PostgreSQL port
+      --database <DATABASE>       Database name
+  -U, --username <USERNAME>       Username
+  -P, --password <PASSWORD>       Password
+  -s, --schema <SCHEMA>           Schema name(s), comma-separated
+      --discover-all-schemas      Discover all user schemas automatically
+      --sort-by <CRITERIA>        Comma-separated ranking criteria: bloat, size, scan-frequency, age [default: bloat]
+      --format <FORMAT>           Output format: json or csv [default: json]
+      --output <FILE>             Write output to file instead of stdout
+      --ssl                       Enable SSL/TLS connection
+      --ssl-self-signed           Allow self-signed certificates
+      --ssl-ca-cert <FILE>        Path to CA certificate
+      --ssl-client-cert <FILE>    Path to client certificate
+      --ssl-client-key <FILE>     Path to client private key
+      --config <FILE>             Path to TOML configuration file
+```
+
+## Adaptive Replica Lag Throttling
+
+When `REINDEX INDEX CONCURRENTLY` runs, it generates substantial WAL traffic. On systems with replication standbys, this can cause replica lag to spike. With `--max-replica-lag-bytes`, workers pause acquiring new indexes whenever lag (measured via `pg_stat_replication`) exceeds the threshold — then automatically resume once lag drops back down.
+
+```bash
+# Pause acquisition when any standby lags more than 1 GB
+pg-reindexer --database mydb --schema public \
+  --max-replica-lag-bytes 1073741824
+
+# Same, but stop workers entirely if lag persists for more than 10 minutes
+pg-reindexer --database mydb --schema public \
+  --max-replica-lag-bytes 1073741824 \
+  --max-replica-lag-wait-secs 600
+```
+
+**Behavior:**
+- Lag is checked before each index acquisition attempt
+- When lag exceeds the threshold, the worker sleeps for 5 seconds and rechecks
+- A warning is logged at first detection and every 60 seconds thereafter
+- Once lag drops below the threshold, acquisition resumes automatically
+- If lag persists beyond `--max-replica-lag-wait-secs` (default: 1800), workers stop gracefully and remaining indexes stay `pending` in the state table so `--resume` can pick them up in the next run
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--max-replica-lag-bytes` | disabled | Lag threshold in bytes; not set means no throttling |
+| `--max-replica-lag-wait-secs` | `1800` | Hard limit (seconds) before workers stop waiting |
+
+## Pacing
+
+The `--pacing-ms` flag inserts a short sleep before each index acquisition attempt. This is useful when running maintenance alongside live traffic and you want to voluntarily reduce the rate at which the tool acquires locks, even under normal conditions.
+
+```bash
+# 50ms pause before each acquisition (reduces lock acquisition rate)
+pg-reindexer --database mydb --schema public --pacing-ms 50
+
+# Disable pacing entirely
+pg-reindexer --database mydb --schema public --pacing-ms 0
+```
+
+The default is 10ms, which is negligible under normal conditions. Raise it (e.g. 100–500ms) during peak traffic windows when any additional database pressure should be minimized.
 
 ## Configuration File
 
@@ -148,6 +272,13 @@ ssl-self-signed = false
 # ssl-client-cert = "/path/to/client-cert.pem"
 # ssl-client-key = "/path/to/client-key.pem"
 
+# Replica lag throttling
+# max-replica-lag-bytes = 1073741824   # pause acquisition when any standby lags > 1 GB
+# max-replica-lag-wait-secs = 1800     # stop workers if lag persists beyond this many seconds
+
+# Pacing
+# pacing-ms = 10   # sleep between acquisition attempts (0 to disable)
+
 # Other settings
 # exclude-indexes = "idx_users_email,idx_orders_created_at"
 resume = false
@@ -203,6 +334,9 @@ Options:
   -i, --skip-inactive-replication-slots                 Skip inactive replication slots check
   -r, --skip-sync-replication-connection                Skip sync replication connection check
       --skip-active-vacuums                             Skip active vacuum check
+      --max-replica-lag-bytes <BYTES>                   Pause acquisition when replica lag exceeds this threshold
+      --max-replica-lag-wait-secs <SECS>                Stop workers if lag persists beyond this limit [default: 1800]
+      --pacing-ms <MS>                                  Sleep before each acquisition attempt [default: 10]
   -m, --max-size-gb <MAX_SIZE_GB>                       Maximum index size in GB [default: 1024]
       --min-size-gb <MIN_SIZE_GB>                       Minimum index size in GB [default: 0]
       --order-by-size <ORDER>                           Order by size: 'asc' or 'desc'
@@ -241,6 +375,9 @@ Options:
 - **Multiple databases/schemas**: Comma-separated lists for batch operations across databases or schemas
 - **SSL/TLS**: Full certificate support including custom CA and mutual TLS
 - **Config file**: TOML configuration with CLI override support
+- **Plan subcommand**: Read-only ranked index worklist (JSON/CSV) with multi-criteria scoring — review before you run
+- **Replica lag throttling**: Adaptive acquisition pause when standby lag exceeds a threshold; hard time limit prevents indefinite waiting
+- **Pacing**: Configurable inter-acquisition sleep to reduce platform pressure during live traffic
 
 ## Database Schema
 
