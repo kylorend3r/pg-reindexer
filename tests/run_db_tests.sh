@@ -32,6 +32,7 @@ RUN_DB=false
 RUN_LOGGING=false
 RUN_CHAOS=false
 RUN_SIGNAL=false
+RUN_PLAN=false
 RUN_ALL=true
 
 if [ $# -gt 0 ]; then
@@ -53,6 +54,9 @@ if [ $# -gt 0 ]; then
             --signal|--signal-handling)
                 RUN_SIGNAL=true
                 ;;
+            --plan|--plan-subcommand)
+                RUN_PLAN=true
+                ;;
             --all)
                 RUN_ALL=true
                 ;;
@@ -65,6 +69,7 @@ if [ $# -gt 0 ]; then
                 echo "  --logging, --dry-run      Run logging and dry-run tests only"
                 echo "  --chaos, --chaos-tests    Run chaos tests only (requires database)"
                 echo "  --signal, --signal-handling Run signal handling tests only"
+                echo "  --plan, --plan-subcommand  Run plan subcommand tests only"
                 echo "  --all                     Run all tests (default)"
                 echo "  --help, -h                Show this help message"
                 echo ""
@@ -94,7 +99,7 @@ if [ $# -gt 0 ]; then
 fi
 
 # If specific tests selected, don't run all
-if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ] || [ "$RUN_SIGNAL" = true ]; then
+if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ] || [ "$RUN_SIGNAL" = true ] || [ "$RUN_PLAN" = true ]; then
     RUN_ALL=false
 fi
 
@@ -109,12 +114,14 @@ if [ "$RUN_ALL" = true ]; then
     echo "  ✓ Logging and Dry-Run Tests"
     echo "  ✓ Signal Handling Tests"
     echo "  ✓ Chaos Tests"
+    echo "  ✓ Plan Subcommand Tests"
 else
     [ "$RUN_CLI" = true ] && echo "  ✓ CLI Validation Tests"
     [ "$RUN_DB" = true ] && echo "  ✓ Database Integration Tests"
     [ "$RUN_LOGGING" = true ] && echo "  ✓ Logging and Dry-Run Tests"
     [ "$RUN_SIGNAL" = true ] && echo "  ✓ Signal Handling Tests"
     [ "$RUN_CHAOS" = true ] && echo "  ✓ Chaos Tests"
+    [ "$RUN_PLAN" = true ] && echo "  ✓ Plan Subcommand Tests"
 fi
 echo ""
 
@@ -243,6 +250,25 @@ if [ "$RUN_ALL" = true ] || [ "$RUN_CHAOS" = true ]; then
         echo -e "${RED}✗ Chaos Tests failed${NC}"
         OVERALL_SUCCESS=false
         FAILED_SUITES+=("Chaos Tests")
+    fi
+    echo ""
+fi
+
+# Run Plan Subcommand Tests
+if [ "$RUN_ALL" = true ] || [ "$RUN_PLAN" = true ]; then
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Running Plan Subcommand Tests...${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    if cargo test --test plan_subcommand -- --nocapture; then
+        echo ""
+        echo -e "${GREEN}✓ Plan Subcommand Tests passed!${NC}"
+    else
+        echo ""
+        echo -e "${RED}✗ Plan Subcommand Tests failed${NC}"
+        OVERALL_SUCCESS=false
+        FAILED_SUITES+=("Plan Subcommand")
     fi
     echo ""
 fi
