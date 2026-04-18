@@ -1147,4 +1147,350 @@ fn test_log_format_with_dry_run() {
         .code(predicate::ne(2));
 }
 
+// ============================================================
+// --max-replica-lag-bytes tests
+// ============================================================
 
+#[test]
+fn test_max_replica_lag_bytes_flag() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--max-replica-lag-bytes")
+        .arg("1073741824")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_max_replica_lag_bytes_small_value() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--max-replica-lag-bytes")
+        .arg("1024")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_max_replica_lag_bytes_invalid_value() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--max-replica-lag-bytes")
+        .arg("not_a_number")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_help_contains_max_replica_lag_bytes() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("max-replica-lag-bytes"));
+}
+
+// ============================================================
+// --max-replica-lag-wait-secs tests
+// ============================================================
+
+#[test]
+fn test_max_replica_lag_wait_secs_flag() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--max-replica-lag-wait-secs")
+        .arg("600")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_max_replica_lag_wait_secs_invalid_value() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--max-replica-lag-wait-secs")
+        .arg("not_a_number")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_help_contains_max_replica_lag_wait_secs() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("max-replica-lag-wait-secs"));
+}
+
+#[test]
+fn test_replica_lag_flags_together() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--max-replica-lag-bytes")
+        .arg("524288000")
+        .arg("--max-replica-lag-wait-secs")
+        .arg("1800")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_replica_lag_flags_with_dry_run() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--max-replica-lag-bytes")
+        .arg("1073741824")
+        .arg("--max-replica-lag-wait-secs")
+        .arg("900")
+        .arg("--dry-run")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+// ============================================================
+// --pacing-ms tests
+// ============================================================
+
+#[test]
+fn test_pacing_ms_flag_default() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_pacing_ms_custom_value() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--pacing-ms")
+        .arg("50")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_pacing_ms_zero_disables_pacing() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--pacing-ms")
+        .arg("0")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_pacing_ms_large_value() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--pacing-ms")
+        .arg("5000")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_pacing_ms_invalid_value() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--pacing-ms")
+        .arg("not_a_number")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_help_contains_pacing_ms() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pacing-ms"));
+}
+
+#[test]
+fn test_pacing_ms_with_other_flags() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--pacing-ms")
+        .arg("100")
+        .arg("--threads")
+        .arg("4")
+        .arg("--dry-run")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_all_new_flags_together() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--max-replica-lag-bytes")
+        .arg("1073741824")
+        .arg("--max-replica-lag-wait-secs")
+        .arg("1800")
+        .arg("--pacing-ms")
+        .arg("25")
+        .arg("--dry-run")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+// ============================================================
+// Config file tests for new flags
+// ============================================================
+
+#[test]
+fn test_config_file_with_replica_lag_settings() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+max-replica-lag-bytes = 1073741824
+max-replica-lag-wait-secs = 900
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_config_file_with_pacing_ms() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+pacing-ms = 50
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_config_file_with_all_new_flags() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+max-replica-lag-bytes = 524288000
+max-replica-lag-wait-secs = 600
+pacing-ms = 10
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_cli_overrides_config_replica_lag() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+max-replica-lag-bytes = 1073741824
+max-replica-lag-wait-secs = 3600
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .arg("--max-replica-lag-bytes")
+        .arg("104857600")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_cli_overrides_config_pacing_ms() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+pacing-ms = 100
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .arg("--pacing-ms")
+        .arg("200")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
