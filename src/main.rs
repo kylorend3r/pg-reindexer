@@ -112,6 +112,13 @@ struct Args {
     )]
     max_replica_lag_wait_secs: Option<u64>,
 
+    /// Pacing delay before each index acquisition attempt in milliseconds (default: 10)
+    #[arg(
+        long,
+        help = "Sleep duration in milliseconds before each index acquisition attempt to reduce platform pressure (default: 10)"
+    )]
+    pacing_ms: Option<u64>,
+
     /// Maximum index size in GB (default: 1024 GB = 1TB)
     #[arg(
         short = 'm',
@@ -355,6 +362,7 @@ struct Config {
     include_partitions: Option<bool>,
     max_replica_lag_bytes: Option<i64>,
     max_replica_lag_wait_secs: Option<u64>,
+    pacing_ms: Option<u64>,
 }
 
 /// Load configuration from a TOML file
@@ -580,6 +588,11 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
     if args.max_replica_lag_wait_secs.is_none() {
         if let Some(v) = config_file.max_replica_lag_wait_secs {
             args.max_replica_lag_wait_secs = Some(v);
+        }
+    }
+    if args.pacing_ms.is_none() {
+        if let Some(v) = config_file.pacing_ms {
+            args.pacing_ms = Some(v);
         }
     }
 
@@ -1525,6 +1538,7 @@ async fn process_database(
         session_id: session_id.clone(),
         max_replica_lag_bytes: args.max_replica_lag_bytes,
         max_replica_lag_wait_secs: args.max_replica_lag_wait_secs,
+        pacing_ms: args.pacing_ms.unwrap_or(10),
     };
 
     // Create and spawn worker tasks

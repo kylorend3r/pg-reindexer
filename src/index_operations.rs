@@ -612,6 +612,11 @@ pub async fn worker_with_memory_table(
             }
         }
 
+        // Pacing delay before each acquisition attempt
+        if config.pacing_ms > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(config.pacing_ms)).await;
+        }
+
         // Try to acquire an index
         if let Some(index_info) = memory_table
             .try_acquire_index_for_worker(worker_id, &logger)
