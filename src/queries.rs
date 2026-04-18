@@ -275,6 +275,78 @@ pub const GET_PARTITIONED_TABLES_IN_SCHEMA: &str = r#"
     ORDER BY c.relname;
 "#;
 
+/// Bulk index metadata query for the plan subcommand (PostgreSQL 13+)
+/// Returns per-schema index data including size, scan stats, bloat estimate, and last-scan age.
+/// Parameter: $1 = schema name
+pub const GET_PLAN_INDEXES: &str = r#"
+    SELECT
+        n.nspname                                                            AS schema_name,
+        t.relname                                                            AS table_name,
+        i.relname                                                            AS index_name,
+        am.amname                                                            AS index_type,
+        pg_relation_size(i.oid)                                              AS size_bytes,
+        pg_size_pretty(pg_relation_size(i.oid))                              AS size_pretty,
+        COALESCE(s.idx_scan, 0)                                              AS scan_count,
+        TO_CHAR(s.last_idx_scan AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS"Z"')                                   AS last_scan,
+        EXTRACT(EPOCH FROM s.last_idx_scan)::bigint                          AS last_idx_scan_epoch,
+        COALESCE(
+            CASE
+                WHEN t.relpages > 0 AND t.reltuples > 0 THEN
+                    GREATEST(0.0,
+                        (i.relpages::float8 / NULLIF(t.relpages, 0)::float8 * 100.0)
+                        - (i.reltuples::float8 / NULLIF(t.reltuples, 0)::float8 * 100.0)
+                    )
+                ELSE 0.0
+            END,
+            0.0
+        )                                                                    AS estimated_bloat_percent
+    FROM pg_index x
+    JOIN pg_class i   ON i.oid  = x.indexrelid
+    JOIN pg_class t   ON t.oid  = x.indrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    JOIN pg_am am     ON am.oid = i.relam
+    LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = i.oid
+    WHERE n.nspname = $1
+      AND i.relkind = 'i'
+    ORDER BY i.relname
+"#;
+
+/// Fallback variant for PostgreSQL < 13 which lacks the last_idx_scan column.
+/// Identical to GET_PLAN_INDEXES but returns NULL for last_scan and last_idx_scan_epoch.
+pub const GET_PLAN_INDEXES_COMPAT: &str = r#"
+    SELECT
+        n.nspname                                                            AS schema_name,
+        t.relname                                                            AS table_name,
+        i.relname                                                            AS index_name,
+        am.amname                                                            AS index_type,
+        pg_relation_size(i.oid)                                              AS size_bytes,
+        pg_size_pretty(pg_relation_size(i.oid))                              AS size_pretty,
+        COALESCE(s.idx_scan, 0)                                              AS scan_count,
+        NULL::text                                                           AS last_scan,
+        NULL::bigint                                                         AS last_idx_scan_epoch,
+        COALESCE(
+            CASE
+                WHEN t.relpages > 0 AND t.reltuples > 0 THEN
+                    GREATEST(0.0,
+                        (i.relpages::float8 / NULLIF(t.relpages, 0)::float8 * 100.0)
+                        - (i.reltuples::float8 / NULLIF(t.reltuples, 0)::float8 * 100.0)
+                    )
+                ELSE 0.0
+            END,
+            0.0
+        )                                                                    AS estimated_bloat_percent
+    FROM pg_index x
+    JOIN pg_class i   ON i.oid  = x.indexrelid
+    JOIN pg_class t   ON t.oid  = x.indrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    JOIN pg_am am     ON am.oid = i.relam
+    LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = i.oid
+    WHERE n.nspname = $1
+      AND i.relkind = 'i'
+    ORDER BY i.relname
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;

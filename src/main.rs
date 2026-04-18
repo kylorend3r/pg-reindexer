@@ -1,12 +1,19 @@
 use pg_reindexer::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
+use pg_reindexer::plan::PlanArgs;
 use pg_reindexer::types::{IndexFilterType, LogFormat};
 use pg_reindexer::{logging, memory_table, orchestrator, queries, schema, state, validation};
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::{collections::HashSet, sync::Arc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::signal;
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Generate a ranked index worklist without modifying the database
+    Plan(PlanArgs),
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "PostgreSQL Index Reindexer - Reindexes all indexes in a specific schema or table", long_about = None)]
@@ -286,6 +293,9 @@ struct Args {
         help = "Path to TOML configuration file. Configuration file values are overridden by CLI arguments."
     )]
     config: Option<String>,
+
+    #[command(subcommand)]
+    subcommand: Option<Commands>,
 }
 
 /// Configuration structure for file-based configuration
@@ -595,6 +605,11 @@ fn ask_user_confirmation(
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = Args::parse();
+
+    // Dispatch subcommands before the reindex flow
+    if let Some(Commands::Plan(plan_args)) = args.subcommand {
+        return pg_reindexer::plan::run_plan(plan_args).await;
+    }
 
     // Load and merge configuration file if provided
     if let Some(config_path) = &args.config {
