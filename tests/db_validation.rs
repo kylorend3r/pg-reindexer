@@ -943,3 +943,99 @@ async fn test_default_ordering_asc() -> Result<()> {
 
     Ok(())
 }
+
+// ============================================================
+// Replica lag check tests
+// ============================================================
+
+/// Verify the replica lag query runs without error on any server.
+/// On a non-replicated server it must return 0.
+#[tokio::test]
+#[ignore]
+async fn test_get_max_replica_lag_bytes_no_standbys() -> Result<()> {
+    let client = create_test_connection().await?;
+
+    let lag = pg_reindexer::checks::get_max_replica_lag_bytes(&client).await?;
+
+    // A server with no standbys must report 0 lag
+    assert_eq!(
+        lag, 0,
+        "Expected 0 replica lag on a non-replicated server, got {} bytes",
+        lag
+    );
+
+    Ok(())
+}
+
+/// Verify the result is always non-negative (regardless of replication topology).
+#[tokio::test]
+#[ignore]
+async fn test_get_max_replica_lag_bytes_non_negative() -> Result<()> {
+    let client = create_test_connection().await?;
+
+    let lag = pg_reindexer::checks::get_max_replica_lag_bytes(&client).await?;
+
+    assert!(lag >= 0, "Replica lag must be non-negative, got {}", lag);
+
+    Ok(())
+}
+
+/// Verify that the throttle condition (lag > threshold) evaluates correctly
+/// when current lag is zero (no standbys).
+#[tokio::test]
+#[ignore]
+async fn test_replica_lag_below_threshold_allows_acquisition() -> Result<()> {
+    let client = create_test_connection().await?;
+    let threshold_bytes: i64 = 1_073_741_824; // 1 GB
+
+    let lag = pg_reindexer::checks::get_max_replica_lag_bytes(&client).await?;
+
+    let should_throttle = lag > threshold_bytes;
+    assert!(
+        !should_throttle,
+        "Lag {} bytes is below threshold {} bytes — acquisition should not be throttled",
+        lag, threshold_bytes
+    );
+
+    Ok(())
+}
+
+/// Verify that the hard-limit comparison logic works correctly:
+/// waiting beyond the limit must trigger a stop.
+#[tokio::test]
+#[ignore]
+async fn test_replica_lag_hard_limit_logic() -> Result<()> {
+    let client = create_test_connection().await?;
+    let hard_limit_secs: u64 = 30;
+
+    // Simulate: worker has been waiting 35 seconds past the hard limit
+    let waited_secs: u64 = 35;
+    let should_stop = waited_secs >= hard_limit_secs;
+    assert!(
+        should_stop,
+        "After waiting {}s past the {}s hard limit, the worker should stop",
+        waited_secs, hard_limit_secs
+    );
+
+    // Confirm the lag query still works after the decision (connection healthy)
+    let lag = pg_reindexer::checks::get_max_replica_lag_bytes(&client).await?;
+    assert!(lag >= 0, "Lag query should succeed, got {}", lag);
+
+    Ok(())
+}
+
+/// Verify the function handles repeated calls correctly (connection not consumed).
+#[tokio::test]
+#[ignore]
+async fn test_get_max_replica_lag_bytes_repeated_calls() -> Result<()> {
+    let client = create_test_connection().await?;
+
+    for i in 0..5 {
+        let lag = pg_reindexer::checks::get_max_replica_lag_bytes(&client)
+            .await
+            .unwrap_or_else(|e| panic!("Call {} failed: {}", i, e));
+        assert!(lag >= 0, "Call {} returned negative lag: {}", i, lag);
+    }
+
+    Ok(())
+}

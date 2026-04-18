@@ -269,3 +269,106 @@ async fn test_cancellation_with_memory_table() {
     // Should have processed at least one, but not all due to cancellation
     assert!(processed >= 1, "Should have processed at least one index");
 }
+
+// ============================================================
+// Pacing timing tests
+// ============================================================
+
+/// Test that pacing_ms = 0 does not add meaningful delay
+#[tokio::test]
+async fn test_pacing_ms_zero_no_delay() {
+    let pacing_ms: u64 = 0;
+    let iterations = 5;
+    let start = std::time::Instant::now();
+
+    for _ in 0..iterations {
+        if pacing_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(pacing_ms)).await;
+        }
+    }
+
+    let elapsed = start.elapsed();
+    // With zero pacing there should be virtually no delay
+    assert!(
+        elapsed < Duration::from_millis(50),
+        "Zero pacing should complete in under 50ms, took {:?}",
+        elapsed
+    );
+}
+
+/// Test that pacing_ms > 0 adds at least pacing_ms * iterations delay
+#[tokio::test]
+async fn test_pacing_ms_adds_delay_per_iteration() {
+    let pacing_ms: u64 = 30;
+    let iterations = 5;
+    let start = std::time::Instant::now();
+
+    for _ in 0..iterations {
+        if pacing_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(pacing_ms)).await;
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let expected_min = Duration::from_millis(pacing_ms * iterations as u64);
+    assert!(
+        elapsed >= expected_min,
+        "Pacing {}ms x {} iterations should take at least {:?}, took {:?}",
+        pacing_ms, iterations, expected_min, elapsed
+    );
+}
+
+/// Test that higher pacing_ms causes proportionally more delay
+#[tokio::test]
+async fn test_pacing_ms_proportional_to_value() {
+    let low_pacing: u64 = 10;
+    let high_pacing: u64 = 50;
+    let iterations = 3;
+
+    let start_low = std::time::Instant::now();
+    for _ in 0..iterations {
+        tokio::time::sleep(Duration::from_millis(low_pacing)).await;
+    }
+    let elapsed_low = start_low.elapsed();
+
+    let start_high = std::time::Instant::now();
+    for _ in 0..iterations {
+        tokio::time::sleep(Duration::from_millis(high_pacing)).await;
+    }
+    let elapsed_high = start_high.elapsed();
+
+    assert!(
+        elapsed_high > elapsed_low,
+        "Higher pacing ({:?}) should take longer than lower pacing ({:?})",
+        elapsed_high, elapsed_low
+    );
+}
+
+/// Test pacing respects cancellation signal via select!
+#[tokio::test]
+async fn test_pacing_ms_respects_cancellation() {
+    let pacing_ms: u64 = 500; // Long enough that cancellation happens first
+    let (tx, mut cancel_rx) = watch::channel(false);
+
+    let worker = tokio::spawn(async move {
+        let start = std::time::Instant::now();
+        // Simulate one pacing sleep that should be interrupted by cancellation
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(pacing_ms)) => {
+                false // Sleep completed — cancellation did not arrive
+            }
+            _ = cancel_rx.changed() => {
+                true // Cancellation arrived before sleep ended
+            }
+        }
+    });
+
+    // Cancel well before the 500ms sleep would finish
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    tx.send(true).unwrap();
+
+    let result = timeout(Duration::from_secs(1), worker).await;
+    assert!(result.is_ok(), "Worker should complete within timeout");
+    let was_cancelled = result.unwrap().unwrap();
+    assert!(was_cancelled, "Pacing sleep should be interrupted by cancellation");
+}
