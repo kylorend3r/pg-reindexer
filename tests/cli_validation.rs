@@ -1494,3 +1494,73 @@ pacing-ms = 100
         .code(predicate::ne(101))
         .code(predicate::ne(2));
 }
+
+// ============================================================
+// Password security tests
+// ============================================================
+
+#[test]
+fn test_password_cli_flag_emits_warning() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--password")
+        .arg("secret")
+        .env_clear()
+        .assert()
+        .stderr(predicate::str::contains("Warning").and(predicate::str::contains("insecure")));
+}
+
+#[test]
+fn test_no_warning_without_password_flag() {
+    // Running without --password should not print the insecure warning
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .env_clear()
+        .assert()
+        .stderr(predicate::str::contains("insecure").not());
+}
+
+#[test]
+fn test_config_file_env_interpolation() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+password = "${{PG_TEST_SECRET}}"
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    // Should parse cleanly (not exit code 2) when env var is set
+    cmd.arg("--config")
+        .arg(config_path)
+        .env("PG_TEST_SECRET", "hunter2")
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_config_file_literal_password_unchanged() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+password = "literalpassword"
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}

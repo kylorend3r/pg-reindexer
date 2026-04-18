@@ -6,7 +6,8 @@ host = "localhost"
 port = 5432
 database = "postgres"
 username = "postgres"
-password = "postgres"  # Consider using environment variables or .pgpass for security
+password = "${PG_PASSWORD}"  # Recommended: reference an environment variable instead of plaintext
+# password = "postgres"  # Plaintext also works but is less secure
 
 # Schema settings
 # schema = "public"  # Can be a single schema or comma-separated list

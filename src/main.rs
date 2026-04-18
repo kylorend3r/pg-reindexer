@@ -35,7 +35,11 @@ struct Args {
     username: Option<String>,
 
     /// Password (can also be set via PG_PASSWORD environment variable)
-    #[arg(short = 'P', long, help = "Password for the PostgreSQL user")]
+    #[arg(
+        short = 'P',
+        long,
+        help = "Password for the PostgreSQL user. INSECURE: prefer PG_PASSWORD env var — command-line values are visible in process lists and shell history."
+    )]
     password: Option<String>,
 
     /// Schema name(s) to reindex. Can be a single schema or comma-separated list (max 512 schemas). Not required if --discover-all-schemas is used.
@@ -365,10 +369,20 @@ struct Config {
     pacing_ms: Option<u64>,
 }
 
+fn resolve_env_interpolation(value: Option<String>) -> Option<String> {
+    value.and_then(|v| {
+        if let Some(var_name) = v.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+            std::env::var(var_name).ok()
+        } else {
+            Some(v)
+        }
+    })
+}
+
 /// Load configuration from a TOML file
 fn load_config_file(path: &str) -> Result<Config> {
     let file_path = Path::new(path);
-    
+
     // Check if file exists
     if !file_path.exists() {
         return Err(anyhow::anyhow!("Configuration file not found: {}", path));
@@ -378,8 +392,10 @@ fn load_config_file(path: &str) -> Result<Config> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read configuration file: {}", path))?;
 
-    let config = toml::from_str::<Config>(&content)
+    let mut config = toml::from_str::<Config>(&content)
         .with_context(|| format!("Failed to parse TOML configuration file: {}", path))?;
+
+    config.password = resolve_env_interpolation(config.password);
 
     Ok(config)
 }
@@ -644,6 +660,14 @@ fn ask_user_confirmation(
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = Args::parse();
+
+    if args.password.is_some() {
+        eprintln!(
+            "Warning: passing --password on the command line is insecure \
+             (visible in process list and shell history). \
+             Use the PG_PASSWORD environment variable instead."
+        );
+    }
 
     // Dispatch subcommands before the reindex flow
     if let Some(Commands::Plan(plan_args)) = args.subcommand {
