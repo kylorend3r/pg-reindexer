@@ -14,5 +14,6 @@ pub mod save;
 pub mod schema;
 pub mod state;
 pub mod types;
+pub mod plan;
 pub mod validation;
 

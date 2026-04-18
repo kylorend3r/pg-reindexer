@@ -265,6 +265,7 @@ impl IndexMemoryTable {
 
     pub fn get_statistics(&self) -> (usize, usize, usize, usize, usize) {
         let mut pending = 0;
+
         let mut in_progress = 0;
         let mut completed = 0;
         let mut failed = 0;
@@ -282,4 +283,72 @@ impl IndexMemoryTable {
 
         (pending, in_progress, completed, failed, skipped)
     }
+}
+
+/// Ranking criteria for the plan subcommand
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortBy {
+    Bloat,
+    Size,
+    ScanFrequency,
+    Age,
+}
+
+impl std::str::FromStr for SortBy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "bloat" => Ok(SortBy::Bloat),
+            "size" => Ok(SortBy::Size),
+            "scan-frequency" => Ok(SortBy::ScanFrequency),
+            "age" => Ok(SortBy::Age),
+            other => Err(format!(
+                "Invalid sort criterion '{}'. Valid: bloat, size, scan-frequency, age",
+                other
+            )),
+        }
+    }
+}
+
+/// Output format for the plan subcommand
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlanOutputFormat {
+    #[default]
+    Json,
+    Csv,
+}
+
+impl std::str::FromStr for PlanOutputFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "json" => Ok(PlanOutputFormat::Json),
+            "csv" => Ok(PlanOutputFormat::Csv),
+            other => Err(format!(
+                "Invalid output format '{}'. Valid: json, csv",
+                other
+            )),
+        }
+    }
+}
+
+/// Index entry produced by the plan subcommand ranked worklist
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PlanIndexInfo {
+    pub rank: usize,
+    pub schema_name: String,
+    pub table_name: String,
+    pub index_name: String,
+    pub index_type: String,
+    pub size_bytes: i64,
+    pub size_pretty: String,
+    pub scan_count: i64,
+    /// ISO-8601 timestamp of the last index scan, or null when never scanned
+    pub last_scan: Option<String>,
+    pub estimated_bloat_percent: f64,
+    /// Epoch seconds used internally for Age ranking; excluded from serialized output
+    #[serde(skip)]
+    pub last_idx_scan_epoch_secs: Option<i64>,
 }
