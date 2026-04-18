@@ -162,6 +162,13 @@ impl SharedIndexMemoryTable {
         );
     }
 
+    /// Marks all remaining Pending indexes as Skipped.
+    /// Call only after all workers have completed to avoid races.
+    pub async fn mark_all_pending_skipped(&self) {
+        let mut table = self.inner.lock().await;
+        table.mark_all_pending_skipped();
+    }
+
     /// Get current statistics
     pub async fn get_statistics(&self) -> (usize, usize, usize, usize, usize) {
         let table = self.inner.lock().await;

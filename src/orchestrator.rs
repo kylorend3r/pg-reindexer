@@ -30,6 +30,8 @@ pub struct WorkerConfig {
     pub ssl_client_key: Option<String>,
     pub user_index_type: IndexFilterType,
     pub session_id: Option<String>,
+    pub max_replica_lag_bytes: Option<i64>,
+    pub max_replica_lag_wait_secs: Option<u64>,
 }
 
 /// Orchestrator for managing reindexing operations
@@ -258,6 +260,9 @@ impl ReindexOrchestrator {
         log_file: String,
         silence_mode: bool,
     ) {
+        // Mark any indexes still Pending as Skipped (e.g. workers stopped due to replica lag timeout)
+        memory_table.mark_all_pending_skipped().await;
+
         // Get final statistics from memory table
         let (pending, in_progress, completed, failed, skipped) =
             memory_table.get_statistics().await;

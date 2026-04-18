@@ -31,6 +31,15 @@ pub async fn get_sync_replication_connection(client: &Client) -> Result<bool> {
     Ok(sync_replication_connection_count > 0)
 }
 
+/// Returns the maximum replica lag in bytes across all standbys, or 0 if no replicas exist.
+pub async fn get_max_replica_lag_bytes(client: &Client) -> Result<i64> {
+    let rows = client
+        .query(crate::queries::GET_MAX_REPLICA_LAG_BYTES, &[])
+        .await
+        .context("Failed to query replica lag from pg_stat_replication")?;
+    Ok(rows.first().map(|r| r.get::<_, i64>(0)).unwrap_or(0))
+}
+
 // Perform all reindexing checks once and return results
 pub async fn perform_reindexing_checks(client: &Client) -> Result<ReindexingCheckResults> {
     let active_vacuum = get_active_vacuum(client).await?;

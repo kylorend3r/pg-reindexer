@@ -91,6 +91,20 @@ struct Args {
     )]
     skip_active_vacuums: bool,
 
+    /// Pause index acquisition when replica lag exceeds this threshold (bytes)
+    #[arg(
+        long,
+        help = "Pause new index acquisitions when replica lag exceeds this threshold in bytes"
+    )]
+    max_replica_lag_bytes: Option<i64>,
+
+    /// Maximum seconds to wait for replica lag to drop before stopping workers (default: 1800)
+    #[arg(
+        long,
+        help = "Hard limit in seconds for how long workers will wait for replica lag to drop before stopping (default: 1800)"
+    )]
+    max_replica_lag_wait_secs: Option<u64>,
+
     /// Maximum index size in GB (default: 1024 GB = 1TB)
     #[arg(
         short = 'm',
@@ -329,6 +343,8 @@ struct Config {
     order_by_size: Option<String>,
     ask_confirmation: Option<bool>,
     include_partitions: Option<bool>,
+    max_replica_lag_bytes: Option<i64>,
+    max_replica_lag_wait_secs: Option<u64>,
 }
 
 /// Load configuration from a TOML file
@@ -544,6 +560,16 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
     if let Some(include_parts) = config_file.include_partitions {
         if args.include_partitions != include_parts {
             args.include_partitions = include_parts;
+        }
+    }
+    if args.max_replica_lag_bytes.is_none() {
+        if let Some(v) = config_file.max_replica_lag_bytes {
+            args.max_replica_lag_bytes = Some(v);
+        }
+    }
+    if args.max_replica_lag_wait_secs.is_none() {
+        if let Some(v) = config_file.max_replica_lag_wait_secs {
+            args.max_replica_lag_wait_secs = Some(v);
         }
     }
 
@@ -1482,6 +1508,8 @@ async fn process_database(
         ssl_client_key: args.ssl_client_key.clone(),
         user_index_type: args.index_type,
         session_id: session_id.clone(),
+        max_replica_lag_bytes: args.max_replica_lag_bytes,
+        max_replica_lag_wait_secs: args.max_replica_lag_wait_secs,
     };
 
     // Create and spawn worker tasks
