@@ -146,6 +146,50 @@ impl std::str::FromStr for LogFormat {
     }
 }
 
+/// PostgreSQL session-level log_statement setting
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogStatement {
+    #[default]
+    All,
+    None,
+    Ddl,
+    Mod,
+}
+
+impl LogStatement {
+    pub fn as_pg_value(&self) -> &str {
+        match self {
+            LogStatement::All => "all",
+            LogStatement::None => "none",
+            LogStatement::Ddl => "ddl",
+            LogStatement::Mod => "mod",
+        }
+    }
+}
+
+impl std::fmt::Display for LogStatement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_pg_value())
+    }
+}
+
+impl std::str::FromStr for LogStatement {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "all" => Ok(LogStatement::All),
+            "none" => Ok(LogStatement::None),
+            "ddl" => Ok(LogStatement::Ddl),
+            "mod" => Ok(LogStatement::Mod),
+            _ => Err(format!(
+                "Invalid log_statement value '{}'. Must be one of: all, none, ddl, mod",
+                s
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct IndexEntry {
     pub index_info: IndexInfo,
@@ -361,4 +405,51 @@ pub struct PlanIndexInfo {
     /// Epoch seconds used internally for Age ranking; excluded from serialized output
     #[serde(skip)]
     pub last_idx_scan_epoch_secs: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LogStatement;
+
+    #[test]
+    fn log_statement_default_is_all() {
+        assert_eq!(LogStatement::default(), LogStatement::All);
+    }
+
+    #[test]
+    fn log_statement_from_str_round_trips() {
+        for (input, expected) in [
+            ("all", LogStatement::All),
+            ("none", LogStatement::None),
+            ("ddl", LogStatement::Ddl),
+            ("mod", LogStatement::Mod),
+        ] {
+            let parsed: LogStatement = input.parse().unwrap();
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.as_pg_value(), input);
+        }
+    }
+
+    #[test]
+    fn log_statement_from_str_case_insensitive() {
+        assert_eq!("ALL".parse::<LogStatement>().unwrap(), LogStatement::All);
+        assert_eq!("DDL".parse::<LogStatement>().unwrap(), LogStatement::Ddl);
+        assert_eq!("MOD".parse::<LogStatement>().unwrap(), LogStatement::Mod);
+        assert_eq!("NONE".parse::<LogStatement>().unwrap(), LogStatement::None);
+    }
+
+    #[test]
+    fn log_statement_invalid_returns_error() {
+        assert!("dml".parse::<LogStatement>().is_err());
+        assert!("garbage".parse::<LogStatement>().is_err());
+        assert!("".parse::<LogStatement>().is_err());
+    }
+
+    #[test]
+    fn log_statement_display_matches_pg_value() {
+        assert_eq!(LogStatement::All.to_string(), "all");
+        assert_eq!(LogStatement::None.to_string(), "none");
+        assert_eq!(LogStatement::Ddl.to_string(), "ddl");
+        assert_eq!(LogStatement::Mod.to_string(), "mod");
+    }
 }

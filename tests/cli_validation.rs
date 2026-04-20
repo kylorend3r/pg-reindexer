@@ -1565,6 +1565,111 @@ password = "literalpassword"
         .code(predicate::ne(2));
 }
 
+// --- log_statement tests ---
+
+#[test]
+fn test_log_statement_default_all() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_statement_none() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .arg("--log-statement").arg("none")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_statement_ddl() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .arg("--log-statement").arg("ddl")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_statement_mod() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .arg("--log-statement").arg("mod")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_statement_all_explicit() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .arg("--log-statement").arg("all")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_statement_invalid_rejected() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .arg("--log-statement").arg("garbage")
+        .env_clear()
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid").or(predicate::str::contains("error")));
+}
+
+#[test]
+fn test_log_statement_from_config_file() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+log-statement = "none"
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_log_statement_cli_overrides_config_file() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+log-statement = "none"
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .arg("--log-statement").arg("ddl")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
 // --- pgpass permission tests ---
 
 #[cfg(unix)]

@@ -1,6 +1,6 @@
 use pg_reindexer::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
 use pg_reindexer::plan::PlanArgs;
-use pg_reindexer::types::{IndexFilterType, LogFormat};
+use pg_reindexer::types::{IndexFilterType, LogFormat, LogStatement};
 use pg_reindexer::{logging, memory_table, orchestrator, queries, schema, state, validation};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -183,6 +183,15 @@ struct Args {
         help = "Lock timeout in seconds. Set to 0 for no timeout (default). This controls how long to wait for locks before timing out."
     )]
     lock_timeout_seconds: u64,
+
+    /// PostgreSQL log_statement session setting (default: all)
+    #[arg(
+        long,
+        default_value = "all",
+        value_parser = clap::value_parser!(LogStatement),
+        help = "PostgreSQL log_statement session setting: all (default), none, ddl, mod"
+    )]
+    log_statement: LogStatement,
 
     /// Log file path (default: reindexer.log in current directory)
     #[arg(
@@ -367,6 +376,7 @@ struct Config {
     max_replica_lag_bytes: Option<i64>,
     max_replica_lag_wait_secs: Option<u64>,
     pacing_ms: Option<u64>,
+    log_statement: Option<String>,
 }
 
 fn resolve_env_interpolation(value: Option<String>) -> Option<String> {
@@ -609,6 +619,13 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
     if args.pacing_ms.is_none() {
         if let Some(v) = config_file.pacing_ms {
             args.pacing_ms = Some(v);
+        }
+    }
+    if args.log_statement == LogStatement::All {
+        if let Some(ref s) = config_file.log_statement {
+            if let Ok(v) = s.parse::<LogStatement>() {
+                args.log_statement = v;
+            }
         }
     }
 
@@ -1313,6 +1330,7 @@ async fn process_database(
         args.max_parallel_maintenance_workers,
         args.maintenance_io_concurrency,
         args.lock_timeout_seconds,
+        args.log_statement,
     )
     .await?;
     logger_arc.log_session_parameters(
@@ -1563,6 +1581,7 @@ async fn process_database(
         max_replica_lag_bytes: args.max_replica_lag_bytes,
         max_replica_lag_wait_secs: args.max_replica_lag_wait_secs,
         pacing_ms: args.pacing_ms.unwrap_or(10),
+        log_statement: args.log_statement,
     };
 
     // Create and spawn worker tasks
