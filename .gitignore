@@ -11,11 +11,12 @@
 .cursor/
 
 # test and debug files
-test_commands.sh
-reindexer.log
-QUICK_TEST_REFERENCE.md
+*.log
 release-notes.md
 *.tar.gz
+
+# Developer docs (Claude Code internal)
+docs/
 
 # Binaries
 *.exe
@@ -32,4 +33,3 @@ scripts/
 # Claude Code
 CLAUDE.md
 TODO.md
-RELEASE.md
