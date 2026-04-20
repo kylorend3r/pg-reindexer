@@ -4,11 +4,39 @@ use crate::config::{
     DEFAULT_POSTGRES_DATABASE, DEFAULT_POSTGRES_USERNAME,
 };
 use crate::credentials::get_password_from_pgpass;
+use crate::types::LogStatement;
 use anyhow::{Context, Result};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use std::{env, fs};
 use tokio_postgres::{Config, NoTls, config::SslMode};
+use zeroize::Zeroizing;
+
+/// Password wrapper that zeroes memory on drop.
+/// Debug output shows [REDACTED] to prevent accidental logging.
+pub struct SecretString(Zeroizing<String>);
+
+impl SecretString {
+    pub fn new(s: String) -> Self {
+        Self(Zeroizing::new(s))
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Clone for SecretString {
+    fn clone(&self) -> Self {
+        Self::new(self.0.as_str().to_owned())
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
 
 /// Connection configuration structure
 /// 
@@ -19,7 +47,7 @@ pub struct ConnectionConfig {
     pub port: u16,
     pub database: String,
     pub username: String,
-    pub password: Option<String>,
+    pub password: Option<SecretString>,
     pub ssl: bool,
     pub ssl_self_signed: bool,
     pub ssl_ca_cert: Option<String>,
@@ -76,7 +104,8 @@ impl ConnectionConfig {
             })
             .or_else(|| {
                 get_password_from_pgpass(&host, port, &database, &username).unwrap_or(None)
-            });
+            })
+            .map(SecretString::new);
 
         Ok(Self {
             host,
@@ -103,7 +132,7 @@ impl ConnectionConfig {
         );
 
         if let Some(ref pwd) = self.password {
-            connection_string.push_str(&format!(" password={}", escape_libpq_value(pwd)));
+            connection_string.push_str(&format!(" password={}", escape_libpq_value(pwd.expose())));
         }
 
         connection_string
@@ -125,9 +154,8 @@ pub async fn set_session_parameters(
     max_parallel_maintenance_workers: u64,
     maintenance_io_concurrency: u64,
     lock_timeout_seconds: u64,
+    log_statement: LogStatement,
 ) -> Result<()> {
-    // This function can be improved to set session parameters from the cli arguments.
-    // For now set the session parameters to 0.
     client
         .execute(crate::queries::SET_STATEMENT_TIMEOUT, &[])
         .await
@@ -140,10 +168,11 @@ pub async fn set_session_parameters(
         .execute(crate::queries::SET_APPLICATION_NAME, &[])
         .await
         .context("Set the application name.")?;
+    let log_statement_sql = format!("SET log_statement TO '{}'", log_statement.as_pg_value());
     client
-        .execute(crate::queries::SET_LOG_STATEMENTS, &[])
+        .execute(&log_statement_sql, &[])
         .await
-        .context("Set log_statement to 'all'.")?;
+        .context("Set log_statement.")?;
 
     // Set lock_timeout
     // PostgreSQL SET command doesn't support parameterized queries with type casting
@@ -379,6 +408,7 @@ pub async fn create_connection_with_session_parameters_ssl(
     max_parallel_maintenance_workers: u64,
     maintenance_io_concurrency: u64,
     lock_timeout_seconds: u64,
+    log_statement: LogStatement,
     use_ssl: bool,
     accept_invalid_certs: bool,
     ssl_ca_cert: Option<String>,
@@ -405,6 +435,7 @@ pub async fn create_connection_with_session_parameters_ssl(
         max_parallel_maintenance_workers,
         maintenance_io_concurrency,
         lock_timeout_seconds,
+        log_statement,
     )
     .await?;
 

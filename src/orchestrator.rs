@@ -4,7 +4,7 @@ use crate::index_operations;
 use crate::logging;
 use crate::memory_table;
 use crate::state;
-use crate::types::{IndexFilterType, IndexInfo};
+use crate::types::{IndexFilterType, IndexInfo, LogStatement};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -33,6 +33,7 @@ pub struct WorkerConfig {
     pub max_replica_lag_bytes: Option<i64>,
     pub max_replica_lag_wait_secs: Option<u64>,
     pub pacing_ms: u64,
+    pub log_statement: LogStatement,
 }
 
 /// Orchestrator for managing reindexing operations
