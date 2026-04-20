@@ -39,6 +39,23 @@ pub fn get_password_from_pgpass(
         return Ok(None);
     }
 
+    // Unix: ignore and warn if permissions are more permissive than 0600, matching libpq behaviour
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(pgpass_path)
+            .map(|m| m.permissions().mode() & 0o777)
+            .unwrap_or(0);
+        if mode != 0o600 {
+            eprintln!(
+                "WARNING: password file \"{}\" has group or world access; \
+                 permissions should be u=rw (0600) or less. Ignored.",
+                pgpass_path.display()
+            );
+            return Ok(None);
+        }
+    }
+
     // Read the .pgpass file
     let content = fs::read_to_string(pgpass_path).context("Failed to read .pgpass file")?;
 

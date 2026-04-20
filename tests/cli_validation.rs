@@ -1564,3 +1564,39 @@ password = "literalpassword"
         .assert()
         .code(predicate::ne(2));
 }
+
+// --- pgpass permission tests ---
+
+#[cfg(unix)]
+#[test]
+fn test_pgpass_wrong_permissions_emits_warning() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut f = Builder::new().suffix(".pgpass").tempfile().unwrap();
+    writeln!(f, "localhost:5432:mydb:user:secret").unwrap();
+    std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .env("PGPASSFILE", f.path().to_str().unwrap())
+        .env_remove("PG_PASSWORD")
+        .assert()
+        .stderr(predicate::str::contains("WARNING"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_pgpass_correct_permissions_no_warning() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut f = Builder::new().suffix(".pgpass").tempfile().unwrap();
+    writeln!(f, "localhost:5432:mydb:user:secret").unwrap();
+    std::fs::set_permissions(f.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .env("PGPASSFILE", f.path().to_str().unwrap())
+        .env_remove("PG_PASSWORD")
+        .assert()
+        .stderr(predicate::str::contains("WARNING").not());
+}
