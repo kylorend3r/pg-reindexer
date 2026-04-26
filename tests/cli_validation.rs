@@ -1373,6 +1373,42 @@ fn test_all_new_flags_together() {
         .code(predicate::ne(2));
 }
 
+#[test]
+fn test_analyze_tables_single() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--analyze-tables")
+        .arg("users")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_analyze_tables_multiple() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--analyze-tables")
+        .arg("public.users,app.orders")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_analyze_tables_schema_qualified() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--analyze-tables")
+        .arg("public.orders")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
 // ============================================================
 // Config file tests for new flags
 // ============================================================

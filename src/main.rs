@@ -312,6 +312,12 @@ struct Args {
     )]
     include_partitions: bool,
 
+    /// Comma-separated table names to ANALYZE after all reindexing completes.
+    /// Supports schema-qualified names (public.users) or plain names (users).
+    /// ANALYZE is only run for tables that had at least one index successfully reindexed.
+    #[arg(long, help = "Comma-separated table names to ANALYZE after reindexing. Supports schema-qualified (public.users) or plain names (users). Only tables with at least one successfully reindexed index are analyzed.")]
+    analyze_tables: Option<String>,
+
     /// Path to configuration file (TOML format). Configuration file values are overridden by CLI arguments.
     #[arg(
         short = 'C',
@@ -365,6 +371,7 @@ struct Config {
     order_by_size: Option<String>,
     ask_confirmation: Option<bool>,
     include_partitions: Option<bool>,
+    analyze_tables: Option<String>,
     max_replica_lag_bytes: Option<i64>,
     max_replica_lag_wait_secs: Option<u64>,
     pacing_ms: Option<u64>,
@@ -594,6 +601,9 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
         if args.include_partitions != include_parts {
             args.include_partitions = include_parts;
         }
+    }
+    if args.analyze_tables.is_none() {
+        args.analyze_tables = config_file.analyze_tables;
     }
     if args.max_replica_lag_bytes.is_none() {
         if let Some(v) = config_file.max_replica_lag_bytes {
@@ -1639,6 +1649,26 @@ async fn process_database(
             logging::LogLevel::Warning,
             "Reindexing cancelled by user. Use --resume flag to continue from where it left off.",
         );
+    }
+
+    // Parse --analyze-tables
+    let analyze_tables: Vec<String> = args
+        .analyze_tables
+        .as_deref()
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Post-reindex ANALYZE phase — runs only when all workers finished without cancellation
+    if !analyze_tables.is_empty() && !was_cancelled && !*cancel_rx.borrow() {
+        let completed_tables = memory_table.get_completed_table_names().await;
+        orchestrator
+            .run_post_analyze(&schemas, &analyze_tables, &completed_tables)
+            .await;
     }
 
     // Get final statistics and log completion message

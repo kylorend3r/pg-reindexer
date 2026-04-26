@@ -1,5 +1,6 @@
 use crate::logging;
 use crate::types::{IndexInfo, IndexMemoryTable, IndexStatus};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -180,6 +181,22 @@ impl SharedIndexMemoryTable {
         let table = self.inner.lock().await;
         !table.get_pending_indexes().is_empty()
     }
+
+    /// Returns (schema_name, table_name) pairs for every index that reached Completed state.
+    pub async fn get_completed_table_names(&self) -> HashSet<(String, String)> {
+        let table = self.inner.lock().await;
+        table
+            .indexes
+            .values()
+            .filter(|entry| entry.status == IndexStatus::Completed)
+            .map(|entry| {
+                (
+                    entry.index_info.schema_name.clone(),
+                    entry.index_info.table_name.clone(),
+                )
+            })
+            .collect()
+    }
 }
 
 impl Clone for SharedIndexMemoryTable {
@@ -189,3 +206,4 @@ impl Clone for SharedIndexMemoryTable {
         }
     }
 }
+
