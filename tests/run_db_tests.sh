@@ -26,6 +26,11 @@ export PG_DATABASE=${PG_DATABASE:-benchmark}
 export PG_USER=${PG_USER:-superuser}
 export PG_PASSWORD=${PG_PASSWORD:-test123}
 
+# SSL configuration (optional — only required for --ssl-db)
+# PG_SSL_CA_CERT     path to server CA cert (.pem) for verify-ca / verify-full
+# PG_SSL_CLIENT_CERT path to client cert (.pem) for mutual TLS tests
+# PG_SSL_CLIENT_KEY  path to client private key (.pem) for mutual TLS tests
+
 # Parse command line arguments
 RUN_CLI=false
 RUN_DB=false
@@ -33,6 +38,8 @@ RUN_LOGGING=false
 RUN_CHAOS=false
 RUN_SIGNAL=false
 RUN_PLAN=false
+RUN_SSL=false
+RUN_SSL_DB=false
 RUN_ALL=true
 
 if [ $# -gt 0 ]; then
@@ -57,6 +64,12 @@ if [ $# -gt 0 ]; then
             --plan|--plan-subcommand)
                 RUN_PLAN=true
                 ;;
+            --ssl|--ssl-cli)
+                RUN_SSL=true
+                ;;
+            --ssl-db|--ssl-database)
+                RUN_SSL_DB=true
+                ;;
             --all)
                 RUN_ALL=true
                 ;;
@@ -66,27 +79,32 @@ if [ $# -gt 0 ]; then
                 echo "Options:"
                 echo "  --cli, --cli-validation    Run CLI validation tests only"
                 echo "  --db, --db-validation      Run database integration tests only"
-                echo "  --logging, --dry-run      Run logging and dry-run tests only"
-                echo "  --chaos, --chaos-tests    Run chaos tests only (requires database)"
+                echo "  --logging, --dry-run       Run logging and dry-run tests only"
+                echo "  --chaos, --chaos-tests     Run chaos tests only (requires database)"
                 echo "  --signal, --signal-handling Run signal handling tests only"
                 echo "  --plan, --plan-subcommand  Run plan subcommand tests only"
-                echo "  --all                     Run all tests (default)"
-                echo "  --help, -h                Show this help message"
+                echo "  --ssl                      Run SSL CLI tests (no DB needed)"
+                echo "  --ssl-db                   Run SSL DB integration tests (requires SSL-enabled PostgreSQL)"
+                echo "  --all                      Run all tests except --ssl-db (default)"
+                echo "  --help, -h                 Show this help message"
                 echo ""
                 echo "Environment variables:"
-                echo "  PG_HOST       PostgreSQL host (default: localhost)"
-                echo "  PG_PORT       PostgreSQL port (default: 5432)"
-                echo "  PG_DATABASE   Database name (default: benchmark)"
-                echo "  PG_USER       Database user (default: superuser)"
-                echo "  PG_PASSWORD   Database password (default: test123)"
+                echo "  PG_HOST            PostgreSQL host (default: localhost)"
+                echo "  PG_PORT            PostgreSQL port (default: 5432)"
+                echo "  PG_DATABASE        Database name (default: benchmark)"
+                echo "  PG_USER            Database user (default: superuser)"
+                echo "  PG_PASSWORD        Database password (default: test123)"
+                echo "  PG_SSL_CA_CERT     Path to server CA cert (.pem) — optional, for verify-ca/verify-full"
+                echo "  PG_SSL_CLIENT_CERT Path to client cert (.pem)    — optional, for mutual TLS tests"
+                echo "  PG_SSL_CLIENT_KEY  Path to client key (.pem)     — optional, for mutual TLS tests"
                 echo ""
                 echo "Examples:"
-                echo "  $0 --cli                    # Run CLI tests only"
-                echo "  $0 --db                    # Run DB tests only"
-                echo "  $0 --chaos                 # Run chaos tests only"
-                echo "  $0 --signal                # Run signal handling tests only"
-                echo "  $0 --all                   # Run all tests"
-                echo "  PG_PASSWORD=mypass $0 --db # Run DB tests with custom password"
+                echo "  $0 --cli                         # Run CLI tests only"
+                echo "  $0 --db                          # Run DB tests only"
+                echo "  $0 --ssl                         # Run SSL CLI tests"
+                echo "  $0 --ssl-db                      # Run SSL DB tests (sslmode=require, no certs needed)"
+                echo "  PG_PASSWORD=mypass $0 --ssl-db   # SSL DB tests with custom password"
+                echo "  $0 --all                         # Run all tests"
                 exit 0
                 ;;
             *)
@@ -99,7 +117,7 @@ if [ $# -gt 0 ]; then
 fi
 
 # If specific tests selected, don't run all
-if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ] || [ "$RUN_SIGNAL" = true ] || [ "$RUN_PLAN" = true ]; then
+if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ] || [ "$RUN_SIGNAL" = true ] || [ "$RUN_PLAN" = true ] || [ "$RUN_SSL" = true ] || [ "$RUN_SSL_DB" = true ]; then
     RUN_ALL=false
 fi
 
@@ -115,6 +133,8 @@ if [ "$RUN_ALL" = true ]; then
     echo "  ✓ Signal Handling Tests"
     echo "  ✓ Chaos Tests"
     echo "  ✓ Plan Subcommand Tests"
+    echo "  ✓ SSL CLI Tests"
+    echo "  (SSL DB Tests skipped — use --ssl-db to run them)"
 else
     [ "$RUN_CLI" = true ] && echo "  ✓ CLI Validation Tests"
     [ "$RUN_DB" = true ] && echo "  ✓ Database Integration Tests"
@@ -122,12 +142,14 @@ else
     [ "$RUN_SIGNAL" = true ] && echo "  ✓ Signal Handling Tests"
     [ "$RUN_CHAOS" = true ] && echo "  ✓ Chaos Tests"
     [ "$RUN_PLAN" = true ] && echo "  ✓ Plan Subcommand Tests"
+    [ "$RUN_SSL" = true ] && echo "  ✓ SSL CLI Tests"
+    [ "$RUN_SSL_DB" = true ] && echo "  ✓ SSL DB Integration Tests"
 fi
 echo ""
 
 # Check if DB tests are needed
 NEED_DB=false
-if [ "$RUN_ALL" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_CHAOS" = true ]; then
+if [ "$RUN_ALL" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_CHAOS" = true ] || [ "$RUN_SSL_DB" = true ]; then
     NEED_DB=true
 fi
 
@@ -269,6 +291,61 @@ if [ "$RUN_ALL" = true ] || [ "$RUN_PLAN" = true ]; then
         echo -e "${RED}✗ Plan Subcommand Tests failed${NC}"
         OVERALL_SUCCESS=false
         FAILED_SUITES+=("Plan Subcommand")
+    fi
+    echo ""
+fi
+
+# Run SSL CLI Tests (no DB required)
+if [ "$RUN_ALL" = true ] || [ "$RUN_SSL" = true ]; then
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Running SSL CLI Tests...${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    if cargo test --test ssl_tests -- --nocapture; then
+        echo ""
+        echo -e "${GREEN}✓ SSL CLI Tests passed!${NC}"
+    else
+        echo ""
+        echo -e "${RED}✗ SSL CLI Tests failed${NC}"
+        OVERALL_SUCCESS=false
+        FAILED_SUITES+=("SSL CLI")
+    fi
+    echo ""
+fi
+
+# Run SSL DB Integration Tests (requires SSL-enabled PostgreSQL)
+if [ "$RUN_SSL_DB" = true ]; then
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Running SSL DB Integration Tests...${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "SSL Configuration:"
+    echo "  sslmode:         require (self-signed) / verify-ca / verify-full"
+    [ -n "$PG_SSL_CA_CERT" ]     && echo "  PG_SSL_CA_CERT:      $PG_SSL_CA_CERT"
+    [ -n "$PG_SSL_CLIENT_CERT" ] && echo "  PG_SSL_CLIENT_CERT:  $PG_SSL_CLIENT_CERT"
+    [ -n "$PG_SSL_CLIENT_KEY" ]  && echo "  PG_SSL_CLIENT_KEY:   $PG_SSL_CLIENT_KEY"
+    echo ""
+
+    # Run tests that always work (sslmode=require, no cert files)
+    SSL_TESTS="test_sslmode_require_connects test_sslmode_require_pg_stat_ssl_is_true test_sslmode_disable_is_rejected_when_server_requires_ssl"
+
+    # Add verify-ca/verify-full tests only when a CA cert is provided
+    if [ -n "$PG_SSL_CA_CERT" ]; then
+        SSL_TESTS="$SSL_TESTS test_sslmode_verify_ca_connects test_sslmode_verify_full_connects"
+    else
+        echo -e "${YELLOW}  ⚠ PG_SSL_CA_CERT not set — skipping verify-ca and verify-full tests${NC}"
+    fi
+    echo ""
+
+    if cargo test --test ssl_tests $SSL_TESTS -- --include-ignored --nocapture; then
+        echo ""
+        echo -e "${GREEN}✓ SSL DB Integration Tests passed!${NC}"
+    else
+        echo ""
+        echo -e "${RED}✗ SSL DB Integration Tests failed${NC}"
+        OVERALL_SUCCESS=false
+        FAILED_SUITES+=("SSL DB Integration")
     fi
     echo ""
 fi

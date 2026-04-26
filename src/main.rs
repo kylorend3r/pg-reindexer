@@ -1,6 +1,6 @@
 use pg_reindexer::connection::{create_connection_ssl, set_session_parameters, ConnectionConfig};
 use pg_reindexer::plan::PlanArgs;
-use pg_reindexer::types::{IndexFilterType, LogFormat, LogStatement};
+use pg_reindexer::types::{IndexFilterType, LogFormat, LogStatement, SslMode};
 use pg_reindexer::{logging, memory_table, orchestrator, queries, schema, state, validation};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -235,21 +235,14 @@ struct Args {
     )]
     clean_orphaned_indexes: bool,
 
-    /// Enable SSL connection to PostgreSQL
+    /// SSL connection mode
     #[arg(
         long,
-        default_value = "false",
-        help = "Enable SSL connection to PostgreSQL. When enabled, the connection will use SSL/TLS encryption."
+        default_value = "disable",
+        value_parser = clap::value_parser!(SslMode),
+        help = "SSL connection mode: disable (no SSL), require (SSL, no cert verification), verify-ca (SSL + verify certificate), verify-full (SSL + verify certificate and hostname)."
     )]
-    ssl: bool,
-
-    /// Allow self-signed SSL certificates
-    #[arg(
-        long,
-        default_value = "false",
-        help = "Allow self-signed or invalid SSL certificates."
-    )]
-    ssl_self_signed: bool,
+    sslmode: SslMode,
 
     /// Path to CA certificate file for SSL connection
     #[arg(
@@ -362,8 +355,7 @@ struct Config {
     reindex_only_bloated: Option<u8>,
     concurrently: Option<bool>,
     clean_orphaned_indexes: Option<bool>,
-    ssl: Option<bool>,
-    ssl_self_signed: Option<bool>,
+    sslmode: Option<String>,
     ssl_ca_cert: Option<String>,
     ssl_client_cert: Option<String>,
     ssl_client_key: Option<String>,
@@ -559,14 +551,11 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
     }
 
     // SSL settings
-    if let Some(ssl_enabled) = config_file.ssl {
-        if args.ssl != ssl_enabled {
-            args.ssl = ssl_enabled;
-        }
-    }
-    if let Some(ssl_self) = config_file.ssl_self_signed {
-        if args.ssl_self_signed != ssl_self {
-            args.ssl_self_signed = ssl_self;
+    if args.sslmode == SslMode::Disable {
+        if let Some(ref mode_str) = config_file.sslmode {
+            if let Ok(mode) = mode_str.parse::<SslMode>() {
+                args.sslmode = mode;
+            }
         }
     }
     if args.ssl_ca_cert.is_none() {
@@ -725,8 +714,7 @@ async fn main() -> Result<()> {
             args.database.clone(),
             args.username.clone(),
             args.password.clone(),
-            args.ssl,
-            args.ssl_self_signed,
+            args.sslmode,
             args.ssl_ca_cert.clone(),
             args.ssl_client_cert.clone(),
             args.ssl_client_key.clone(),
@@ -867,8 +855,7 @@ async fn process_database(
         Some(database_name.clone()),
         args.username.clone(),
         args.password.clone(),
-        args.ssl,
-        args.ssl_self_signed,
+        args.sslmode,
         args.ssl_ca_cert.clone(),
         args.ssl_client_cert.clone(),
         args.ssl_client_key.clone(),
@@ -886,8 +873,7 @@ async fn process_database(
         // Connect to PostgreSQL for schema discovery
         let discovery_client = create_connection_ssl(
             &connection_string,
-            connection_config.ssl,
-            connection_config.ssl_self_signed,
+            &connection_config.sslmode,
             connection_config.ssl_ca_cert.clone(),
             connection_config.ssl_client_cert.clone(),
             connection_config.ssl_client_key.clone(),
@@ -950,10 +936,10 @@ async fn process_database(
 
     // Connect to PostgreSQL with SSL support for main work
     // (discovery_client from schema discovery is dropped here)
-    if args.ssl {
+    if connection_config.sslmode != SslMode::Disable {
         logger_arc.log(
             logging::LogLevel::Info,
-            &format!("Connecting to database '{}' at {}:{} with SSL", database_name, connection_config.host, connection_config.port),
+            &format!("Connecting to database '{}' at {}:{} with SSL (sslmode={})", database_name, connection_config.host, connection_config.port, connection_config.sslmode),
         );
     } else {
         logger_arc.log(
@@ -964,8 +950,7 @@ async fn process_database(
 
     let client = create_connection_ssl(
         &connection_string,
-        connection_config.ssl,
-        connection_config.ssl_self_signed,
+        &connection_config.sslmode,
         connection_config.ssl_ca_cert.clone(),
         connection_config.ssl_client_cert.clone(),
         connection_config.ssl_client_key.clone(),
@@ -1571,8 +1556,7 @@ async fn process_database(
         skip_active_vacuums: args.skip_active_vacuums,
         bloat_threshold: args.reindex_only_bloated,
         concurrently: args.concurrently,
-        use_ssl: args.ssl,
-        accept_invalid_certs: args.ssl_self_signed,
+        sslmode: args.sslmode,
         ssl_ca_cert: args.ssl_ca_cert.clone(),
         ssl_client_cert: args.ssl_client_cert.clone(),
         ssl_client_key: args.ssl_client_key.clone(),
@@ -1609,8 +1593,7 @@ async fn process_database(
             // Create a new connection for cleanup operations
             let cleanup_client = create_connection_ssl(
                 &connection_string_for_cleanup,
-                connection_config_for_cleanup.ssl,
-                connection_config_for_cleanup.ssl_self_signed,
+                &connection_config_for_cleanup.sslmode,
                 connection_config_for_cleanup.ssl_ca_cert.clone(),
                 connection_config_for_cleanup.ssl_client_cert.clone(),
                 connection_config_for_cleanup.ssl_client_key.clone(),

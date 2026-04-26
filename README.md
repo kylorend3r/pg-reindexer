@@ -43,8 +43,6 @@ It's a particularly good fit if you are:
 - [Quick Start](#quick-start)
 - [Usage Examples](#usage-examples)
 - [Plan Subcommand](#plan-subcommand)
-- [Adaptive Replica Lag Throttling](#adaptive-replica-lag-throttling)
-- [Pacing](#pacing)
 - [Configuration File](#configuration-file)
 - [Environment Variables](#environment-variables)
 - [Command Line Interface](#command-line-interface)
@@ -81,19 +79,13 @@ pg-reindexer --database mydb --schema public,app_schema --threads 4
 pg-reindexer --database mydb --schema public --threads 8 --maintenance-work-mem-gb 4 --max-parallel-maintenance-workers 4
 
 # SSL connection to remote server with bloat-based filtering
-pg-reindexer --database mydb --schema public --host prod-db.company.com --ssl --reindex-only-bloated 15
+pg-reindexer --database mydb --schema public --host prod-db.company.com --sslmode require --reindex-only-bloated 15
 
 # Resume an interrupted session in silence mode
 pg-reindexer --database mydb --schema public --resume --silence-mode
 
 # Preview ranked index worklist before reindexing (no DB writes)
 pg-reindexer plan --database mydb --schema public --sort-by bloat,size --format json
-
-# Throttle acquisition when replica lag exceeds 500 MB, stop after 30 minutes
-pg-reindexer --database mydb --schema public --max-replica-lag-bytes 524288000 --max-replica-lag-wait-secs 1800
-
-# Add 50ms pacing between acquisitions to reduce platform pressure
-pg-reindexer --database mydb --schema public --pacing-ms 50
 ```
 
 ## Plan Subcommand
@@ -157,54 +149,12 @@ Multiple criteria can be combined with a comma (`--sort-by bloat,size`). Each cr
       --sort-by <CRITERIA>        Comma-separated ranking criteria: bloat, size, scan-frequency, age [default: bloat]
       --format <FORMAT>           Output format: json or csv [default: json]
       --output <FILE>             Write output to file instead of stdout
-      --ssl                       Enable SSL/TLS connection
-      --ssl-self-signed           Allow self-signed certificates
+      --sslmode <MODE>            SSL mode: disable, require, verify-ca, verify-full [default: disable]
       --ssl-ca-cert <FILE>        Path to CA certificate
       --ssl-client-cert <FILE>    Path to client certificate
       --ssl-client-key <FILE>     Path to client private key
       --config <FILE>             Path to TOML configuration file
 ```
-
-## Adaptive Replica Lag Throttling
-
-When `REINDEX INDEX CONCURRENTLY` runs, it generates substantial WAL traffic. On systems with replication standbys, this can cause replica lag to spike. With `--max-replica-lag-bytes`, workers pause acquiring new indexes whenever lag (measured via `pg_stat_replication`) exceeds the threshold — then automatically resume once lag drops back down.
-
-```bash
-# Pause acquisition when any standby lags more than 1 GB
-pg-reindexer --database mydb --schema public \
-  --max-replica-lag-bytes 1073741824
-
-# Same, but stop workers entirely if lag persists for more than 10 minutes
-pg-reindexer --database mydb --schema public \
-  --max-replica-lag-bytes 1073741824 \
-  --max-replica-lag-wait-secs 600
-```
-
-**Behavior:**
-- Lag is checked before each index acquisition attempt
-- When lag exceeds the threshold, the worker sleeps for 5 seconds and rechecks
-- A warning is logged at first detection and every 60 seconds thereafter
-- Once lag drops below the threshold, acquisition resumes automatically
-- If lag persists beyond `--max-replica-lag-wait-secs` (default: 1800), workers stop gracefully and remaining indexes stay `pending` in the state table so `--resume` can pick them up in the next run
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--max-replica-lag-bytes` | disabled | Lag threshold in bytes; not set means no throttling |
-| `--max-replica-lag-wait-secs` | `1800` | Hard limit (seconds) before workers stop waiting |
-
-## Pacing
-
-The `--pacing-ms` flag inserts a short sleep before each index acquisition attempt. This is useful when running maintenance alongside live traffic and you want to voluntarily reduce the rate at which the tool acquires locks, even under normal conditions.
-
-```bash
-# 50ms pause before each acquisition (reduces lock acquisition rate)
-pg-reindexer --database mydb --schema public --pacing-ms 50
-
-# Disable pacing entirely
-pg-reindexer --database mydb --schema public --pacing-ms 0
-```
-
-The default is 10ms, which is negligible under normal conditions. Raise it (e.g. 100–500ms) during peak traffic windows when any additional database pressure should be minimized.
 
 ## Configuration File
 
@@ -217,84 +167,7 @@ pg-reindexer --config config.toml
 pg-reindexer --config config.toml --threads 8
 ```
 
-### Configuration File Format
-
-```toml
-# PostgreSQL Reindexer Configuration File
-# CLI arguments take precedence over values in this file
-
-# Connection settings
-host = "localhost"
-port = 5432
-database = "mydb"
-username = "postgres"
-# password = ""  # Use environment variables or .pgpass for security
-
-# Schema settings
-schema = "public"
-# discover-all-schemas = false
-# table = "users"
-
-# Operation settings
-dry-run = false
-threads = 4
-
-# Skip checks
-skip-inactive-replication-slots = false
-skip-sync-replication-connection = false
-skip-active-vacuums = false
-
-# Size filtering
-max-size-gb = 1024
-min-size-gb = 0
-
-# Index type: "btree", "constraint", or "all"
-index-type = "btree"
-
-# Maintenance settings
-maintenance-work-mem-gb = 2
-max-parallel-maintenance-workers = 4
-maintenance-io-concurrency = 10
-lock-timeout-seconds = 0
-
-# Logging
-log-file = "reindexer.log"
-
-# Optional settings
-# reindex-only-bloated = 15
-concurrently = true
-clean-orphaned-indexes = false
-
-# SSL settings
-ssl = false
-ssl-self-signed = false
-# ssl-ca-cert = "/path/to/ca-cert.pem"
-# ssl-client-cert = "/path/to/client-cert.pem"
-# ssl-client-key = "/path/to/client-key.pem"
-
-# Replica lag throttling
-# max-replica-lag-bytes = 1073741824   # pause acquisition when any standby lags > 1 GB
-# max-replica-lag-wait-secs = 1800     # stop workers if lag persists beyond this many seconds
-
-# Pacing
-# pacing-ms = 10   # sleep between acquisition attempts (0 to disable)
-
-# Other settings
-# exclude-indexes = "idx_users_email,idx_orders_created_at"
-resume = false
-silence-mode = false
-# order-by-size = "asc"
-ask-confirmation = false
-```
-
-### Configuration Precedence
-
-1. **CLI arguments** (highest priority)
-2. **Configuration file values**
-3. **Environment variables**
-4. **Default values** (lowest priority)
-
-See `config.example.toml` in the repository for a complete example.
+See `config.example.toml` in the repository for a complete reference. Configuration precedence: CLI arguments → config file → environment variables → defaults.
 
 ## Environment Variables
 
@@ -351,8 +224,7 @@ Options:
       --reindex-only-bloated <PERCENTAGE>               Only reindex indexes with bloat above this %
       --concurrently                                    Use REINDEX CONCURRENTLY (online) [default: true]
       --clean-orphaned-indexes                          Drop orphaned _ccnew indexes before starting
-      --ssl                                             Enable SSL/TLS connection
-      --ssl-self-signed                                 Allow self-signed certificates
+      --sslmode <MODE>                                  SSL mode: disable, require, verify-ca, verify-full [default: disable]
       --ssl-ca-cert <FILE>                              Path to CA certificate (.pem)
       --ssl-client-cert <FILE>                          Path to client certificate (.pem)
       --ssl-client-key <FILE>                           Path to client private key (.pem)
@@ -381,22 +253,40 @@ Options:
 
 ## Database Schema
 
-The tool automatically creates a `reindexer` schema with tables to track operations:
+The tool automatically creates a `reindexer` schema with two tables:
 
 ```sql
 CREATE SCHEMA reindexer;
 
+-- Permanent audit log of every reindex operation
 CREATE TABLE reindexer.reindex_logbook (
-    schema_name VARCHAR(255) NOT NULL,
-    index_name VARCHAR(255) NOT NULL,
-    index_type VARCHAR(255) NOT NULL,
-    reindex_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    reindex_status VARCHAR(255) NOT NULL,
-    before_size BIGINT,
-    after_size BIGINT,
-    size_change BIGINT,
+    schema_name      VARCHAR(255) NOT NULL,
+    index_name       VARCHAR(255) NOT NULL,
+    index_type       VARCHAR(255) NOT NULL,
+    reindex_time     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reindex_status   VARCHAR(255) NOT NULL,
+    before_size      BIGINT,
+    after_size       BIGINT,
+    size_change      REAL,
     reindex_duration REAL
 );
+
+-- Session state for resumable runs (cleared at the start of each fresh run)
+CREATE TABLE reindexer.reindex_state (
+    id          SERIAL PRIMARY KEY,
+    schema_name VARCHAR(255) NOT NULL,
+    table_name  VARCHAR(255) NOT NULL,
+    index_name  VARCHAR(255) NOT NULL,
+    index_type  VARCHAR(255) NOT NULL,
+    state       VARCHAR(50)  NOT NULL DEFAULT 'pending',
+    session_id  VARCHAR(255),
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (schema_name, index_name)
+);
+
+CREATE INDEX idx_reindex_state_state      ON reindexer.reindex_state (state);
+CREATE INDEX idx_reindex_state_session_id ON reindexer.reindex_state (session_id);
 ```
 
 ### Logbook Status Values

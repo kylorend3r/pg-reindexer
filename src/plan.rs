@@ -1,9 +1,8 @@
 use crate::connection::{ConnectionConfig, create_connection_ssl};
 use crate::logging::Logger;
 use crate::queries::{GET_PLAN_INDEXES, GET_PLAN_INDEXES_COMPAT};
-use crate::types::LogFormat;
 use crate::schema::discover_all_user_schemas;
-use crate::types::{PlanIndexInfo, PlanOutputFormat, SortBy};
+use crate::types::{LogFormat, PlanIndexInfo, PlanOutputFormat, SortBy, SslMode};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -42,15 +41,13 @@ pub struct PlanArgs {
     )]
     pub discover_all_schemas: bool,
 
-    #[arg(long, default_value = "false", help = "Enable SSL connection")]
-    pub ssl: bool,
-
     #[arg(
         long,
-        default_value = "false",
-        help = "Allow self-signed SSL certificates"
+        default_value = "disable",
+        value_parser = clap::value_parser!(SslMode),
+        help = "SSL mode: disable, require, verify-ca, verify-full"
     )]
-    pub ssl_self_signed: bool,
+    pub sslmode: SslMode,
 
     #[arg(long, help = "Path to CA certificate file (.pem)")]
     pub ssl_ca_cert: Option<String>,
@@ -99,8 +96,7 @@ struct PlanConfig {
     password: Option<String>,
     schema: Option<String>,
     discover_all_schemas: Option<bool>,
-    ssl: Option<bool>,
-    ssl_self_signed: Option<bool>,
+    sslmode: Option<String>,
     ssl_ca_cert: Option<String>,
     ssl_client_cert: Option<String>,
     ssl_client_key: Option<String>,
@@ -141,11 +137,12 @@ fn merge_plan_config(cfg: PlanConfig, mut args: PlanArgs) -> PlanArgs {
     if !args.discover_all_schemas {
         args.discover_all_schemas = cfg.discover_all_schemas.unwrap_or(false);
     }
-    if !args.ssl {
-        args.ssl = cfg.ssl.unwrap_or(false);
-    }
-    if !args.ssl_self_signed {
-        args.ssl_self_signed = cfg.ssl_self_signed.unwrap_or(false);
+    if args.sslmode == SslMode::Disable {
+        if let Some(ref mode_str) = cfg.sslmode {
+            if let Ok(mode) = mode_str.parse::<SslMode>() {
+                args.sslmode = mode;
+            }
+        }
     }
     if args.ssl_ca_cert.is_none() {
         args.ssl_ca_cert = cfg.ssl_ca_cert;
@@ -362,8 +359,7 @@ pub async fn run_plan(mut args: PlanArgs) -> Result<()> {
         args.database.clone(),
         args.username.clone(),
         args.password.clone(),
-        args.ssl,
-        args.ssl_self_signed,
+        args.sslmode,
         args.ssl_ca_cert.clone(),
         args.ssl_client_cert.clone(),
         args.ssl_client_key.clone(),
@@ -375,11 +371,10 @@ pub async fn run_plan(mut args: PlanArgs) -> Result<()> {
 
     let client = create_connection_ssl(
         &conn_str,
-        args.ssl,
-        args.ssl_self_signed,
-        args.ssl_ca_cert.clone(),
-        args.ssl_client_cert.clone(),
-        args.ssl_client_key.clone(),
+        &conn_cfg.sslmode,
+        conn_cfg.ssl_ca_cert.clone(),
+        conn_cfg.ssl_client_cert.clone(),
+        conn_cfg.ssl_client_key.clone(),
         &logger,
     )
     .await?;

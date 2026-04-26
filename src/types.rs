@@ -114,6 +114,44 @@ impl std::str::FromStr for IndexFilterType {
     }
 }
 
+/// SSL connection mode, matching libpq sslmode semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SslMode {
+    #[default]
+    Disable,
+    Require,
+    VerifyCa,
+    VerifyFull,
+}
+
+impl std::fmt::Display for SslMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SslMode::Disable => write!(f, "disable"),
+            SslMode::Require => write!(f, "require"),
+            SslMode::VerifyCa => write!(f, "verify-ca"),
+            SslMode::VerifyFull => write!(f, "verify-full"),
+        }
+    }
+}
+
+impl std::str::FromStr for SslMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "disable" => Ok(SslMode::Disable),
+            "require" => Ok(SslMode::Require),
+            "verify-ca" => Ok(SslMode::VerifyCa),
+            "verify-full" => Ok(SslMode::VerifyFull),
+            _ => Err(format!(
+                "Invalid sslmode '{}'. Must be one of: disable, require, verify-ca, verify-full",
+                s
+            )),
+        }
+    }
+}
+
 /// Log output format (text or JSON)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LogFormat {
