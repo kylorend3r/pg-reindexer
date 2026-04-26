@@ -7,6 +7,7 @@
 #   ./tests/run_db_tests.sh --db               # Run only DB tests
 #   ./tests/run_db_tests.sh --logging          # Run only logging/dry-run tests
 #   ./tests/run_db_tests.sh --signal           # Run only signal handling tests
+#   ./tests/run_db_tests.sh --post-analyze     # Run post-analyze unit tests only
 #   ./tests/run_db_tests.sh --all              # Run all tests (default)
 #   PG_PASSWORD=mypass ./tests/run_db_tests.sh --db
 
@@ -37,6 +38,7 @@ RUN_DB=false
 RUN_LOGGING=false
 RUN_CHAOS=false
 RUN_SIGNAL=false
+RUN_POST_ANALYZE=false
 RUN_PLAN=false
 RUN_SSL=false
 RUN_SSL_DB=false
@@ -61,6 +63,9 @@ if [ $# -gt 0 ]; then
             --signal|--signal-handling)
                 RUN_SIGNAL=true
                 ;;
+            --post-analyze|--post-analyze-unit)
+                RUN_POST_ANALYZE=true
+                ;;
             --plan|--plan-subcommand)
                 RUN_PLAN=true
                 ;;
@@ -82,6 +87,7 @@ if [ $# -gt 0 ]; then
                 echo "  --logging, --dry-run       Run logging and dry-run tests only"
                 echo "  --chaos, --chaos-tests     Run chaos tests only (requires database)"
                 echo "  --signal, --signal-handling Run signal handling tests only"
+                echo "  --post-analyze             Run post-analyze unit tests only"
                 echo "  --plan, --plan-subcommand  Run plan subcommand tests only"
                 echo "  --ssl                      Run SSL CLI tests (no DB needed)"
                 echo "  --ssl-db                   Run SSL DB integration tests (requires SSL-enabled PostgreSQL)"
@@ -117,7 +123,7 @@ if [ $# -gt 0 ]; then
 fi
 
 # If specific tests selected, don't run all
-if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ] || [ "$RUN_SIGNAL" = true ] || [ "$RUN_PLAN" = true ] || [ "$RUN_SSL" = true ] || [ "$RUN_SSL_DB" = true ]; then
+if [ "$RUN_CLI" = true ] || [ "$RUN_DB" = true ] || [ "$RUN_LOGGING" = true ] || [ "$RUN_CHAOS" = true ] || [ "$RUN_SIGNAL" = true ] || [ "$RUN_POST_ANALYZE" = true ] || [ "$RUN_PLAN" = true ] || [ "$RUN_SSL" = true ] || [ "$RUN_SSL_DB" = true ]; then
     RUN_ALL=false
 fi
 
@@ -131,6 +137,7 @@ if [ "$RUN_ALL" = true ]; then
     echo "  ✓ Database Integration Tests"
     echo "  ✓ Logging and Dry-Run Tests"
     echo "  ✓ Signal Handling Tests"
+    echo "  ✓ Post-Analyze Unit Tests"
     echo "  ✓ Chaos Tests"
     echo "  ✓ Plan Subcommand Tests"
     echo "  ✓ SSL CLI Tests"
@@ -140,6 +147,7 @@ else
     [ "$RUN_DB" = true ] && echo "  ✓ Database Integration Tests"
     [ "$RUN_LOGGING" = true ] && echo "  ✓ Logging and Dry-Run Tests"
     [ "$RUN_SIGNAL" = true ] && echo "  ✓ Signal Handling Tests"
+    [ "$RUN_POST_ANALYZE" = true ] && echo "  ✓ Post-Analyze Unit Tests"
     [ "$RUN_CHAOS" = true ] && echo "  ✓ Chaos Tests"
     [ "$RUN_PLAN" = true ] && echo "  ✓ Plan Subcommand Tests"
     [ "$RUN_SSL" = true ] && echo "  ✓ SSL CLI Tests"
@@ -253,6 +261,25 @@ if [ "$RUN_ALL" = true ] || [ "$RUN_SIGNAL" = true ]; then
         echo -e "${RED}✗ Signal Handling Tests failed${NC}"
         OVERALL_SUCCESS=false
         FAILED_SUITES+=("Signal Handling")
+    fi
+    echo ""
+fi
+
+# Run Post-Analyze Unit Tests
+if [ "$RUN_ALL" = true ] || [ "$RUN_POST_ANALYZE" = true ]; then
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}Running Post-Analyze Unit Tests...${NC}"
+    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    if cargo test --test post_analyze_unit -- --nocapture; then
+        echo ""
+        echo -e "${GREEN}✓ Post-Analyze Unit Tests passed!${NC}"
+    else
+        echo ""
+        echo -e "${RED}✗ Post-Analyze Unit Tests failed${NC}"
+        OVERALL_SUCCESS=false
+        FAILED_SUITES+=("Post-Analyze Unit")
     fi
     echo ""
 fi

@@ -3,6 +3,7 @@
 use crate::index_operations;
 use crate::logging;
 use crate::memory_table;
+use crate::queries;
 use crate::state;
 use crate::types::{IndexFilterType, IndexInfo, LogStatement, SslMode};
 use anyhow::Result;
@@ -10,6 +11,49 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio_postgres::Client;
+
+fn analyze_sql_template_for_version(pg_version: i32) -> &'static str {
+    if pg_version >= 140000 {
+        queries::ANALYZE_TABLE_SKIP_LOCKED
+    } else {
+        queries::ANALYZE_TABLE
+    }
+}
+
+fn resolve_analyze_targets(
+    schemas: &[String],
+    analyze_tables: &[String],
+    completed_tables: &HashSet<(String, String)>,
+) -> Vec<(String, String)> {
+    let mut targets = Vec::new();
+
+    for analyze_target in analyze_tables {
+        if let Some((schema, table)) = analyze_target.split_once('.') {
+            let schema_name = schema.trim().to_string();
+            let table_name = table.trim().to_string();
+            if !schema_name.is_empty()
+                && !table_name.is_empty()
+                && completed_tables.contains(&(schema_name.clone(), table_name.clone()))
+            {
+                targets.push((schema_name, table_name));
+            }
+            continue;
+        }
+
+        let table_name = analyze_target.trim().to_string();
+        if table_name.is_empty() {
+            continue;
+        }
+
+        for schema_name in schemas {
+            if completed_tables.contains(&(schema_name.clone(), table_name.clone())) {
+                targets.push((schema_name.clone(), table_name.clone()));
+            }
+        }
+    }
+
+    targets
+}
 
 /// Worker configuration for creating worker tasks
 #[derive(Debug, Clone)]
@@ -279,5 +323,51 @@ impl ReindexOrchestrator {
             final_logger.log(logging::LogLevel::Success, "Reindex process completed");
         }
     }
+
+    pub async fn run_post_analyze(
+        &self,
+        schemas: &[String],
+        analyze_tables: &[String],
+        completed_tables: &HashSet<(String, String)>,
+    ) {
+        let pg_version: i32 = match self.client.query_one(queries::GET_PG_VERSION_NUM, &[]).await {
+            Ok(row) => row.get(0),
+            Err(e) => {
+                self.logger.log(
+                    logging::LogLevel::Warning,
+                    &format!("Skipping post-reindex ANALYZE: failed to get PostgreSQL version: {}", e),
+                );
+                return;
+            }
+        };
+
+        let sql_template = analyze_sql_template_for_version(pg_version);
+        let targets = resolve_analyze_targets(schemas, analyze_tables, completed_tables);
+
+        for (schema_name, table_name) in targets {
+            self.logger.log(
+                logging::LogLevel::Info,
+                &format!(
+                    "Running post-reindex ANALYZE on {}.{}",
+                    schema_name, table_name
+                ),
+            );
+
+            let query = sql_template
+                .replacen("{}", &schema_name, 1)
+                .replacen("{}", &table_name, 1);
+            match self.client.execute(&query, &[]).await {
+                Ok(_) => self.logger.log(
+                    logging::LogLevel::Success,
+                    &format!("ANALYZE completed for {}.{}", schema_name, table_name),
+                ),
+                Err(e) => self.logger.log(
+                    logging::LogLevel::Warning,
+                    &format!("ANALYZE failed for {}.{}: {}", schema_name, table_name, e),
+                ),
+            }
+        }
+    }
 }
+
 

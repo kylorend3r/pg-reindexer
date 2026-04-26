@@ -253,6 +253,21 @@ echo "# 44. Lock timeout setting"
 cargo run -- --schema $SCHEMA --lock-timeout-seconds 30
 echo ""
 
+echo "=== Post-Reindex ANALYZE Scenarios ==="
+echo ""
+
+echo "# 44a. Dry-run with --analyze-tables (ANALYZE phase should not run in dry-run)"
+cargo run -- --schema $SCHEMA --dry-run --analyze-tables users
+echo ""
+
+echo "# 44b. Dry-run with schema-qualified and plain table names"
+cargo run -- --schema $SCHEMA --dry-run --analyze-tables public.users,orders
+echo ""
+
+echo "# 44c. Live run with post-reindex ANALYZE targets"
+cargo run -- --schema $SCHEMA --analyze-tables public.users,orders
+echo ""
+
 echo "=== Combined Scenarios ==="
 echo ""
 

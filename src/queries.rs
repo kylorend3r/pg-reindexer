@@ -8,6 +8,15 @@ pub const GET_ACTIVE_VACUUM: &str = r#"
     AND pid != pg_backend_pid();
 "#;
 
+/// ANALYZE with SKIP_LOCKED — PostgreSQL 14+
+pub const ANALYZE_TABLE_SKIP_LOCKED: &str = r#"ANALYZE (SKIP_LOCKED) "{}"."{}" "#;
+
+/// Plain ANALYZE — fallback for PostgreSQL < 14
+pub const ANALYZE_TABLE: &str = r#"ANALYZE "{}"."{}" "#;
+
+/// PostgreSQL server version number (for example: 140010 for 14.10)
+pub const GET_PG_VERSION_NUM: &str = "SELECT current_setting('server_version_num')::int";
+
 /// Builds the SQL query for fetching indexes based on filters
 /// 
 /// # Parameters

@@ -84,6 +84,9 @@ pg-reindexer --database mydb --schema public --host prod-db.company.com --sslmod
 # Resume an interrupted session in silence mode
 pg-reindexer --database mydb --schema public --resume --silence-mode
 
+# Run post-reindex ANALYZE on selected tables (PG14+ uses SKIP_LOCKED; older versions fall back automatically)
+pg-reindexer --database mydb --schema public --analyze-tables public.users,orders
+
 # Preview ranked index worklist before reindexing (no DB writes)
 pg-reindexer plan --database mydb --schema public --sort-by bloat,size --format json
 ```
@@ -212,6 +215,7 @@ Options:
       --pacing-ms <MS>                                  Sleep before each acquisition attempt [default: 10]
   -m, --max-size-gb <MAX_SIZE_GB>                       Maximum index size in GB [default: 1024]
       --min-size-gb <MIN_SIZE_GB>                       Minimum index size in GB [default: 0]
+      --analyze-tables <TABLES>                         Comma-separated tables to ANALYZE after reindexing; uses SKIP_LOCKED on PG14+ (fallback on older versions)
       --order-by-size <ORDER>                           Order by size: 'asc' or 'desc'
       --ask-confirmation                                Ask for confirmation before proceeding
       --index-type <INDEX_TYPE>                         'btree', 'constraint', or 'all' [default: btree]
@@ -250,6 +254,7 @@ Options:
 - **Plan subcommand**: Read-only ranked index worklist (JSON/CSV) with multi-criteria scoring — review before you run
 - **Replica lag throttling**: Adaptive acquisition pause when standby lag exceeds a threshold; hard time limit prevents indefinite waiting
 - **Pacing**: Configurable inter-acquisition sleep to reduce platform pressure during live traffic
+- **Post-reindex ANALYZE hook**: Optional `--analyze-tables` refreshes planner stats for selected tables that had completed reindex work (PG14+ uses `ANALYZE (SKIP_LOCKED)`, older versions use plain `ANALYZE`)
 
 ## Database Schema
 
