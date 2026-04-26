@@ -4,7 +4,7 @@ use crate::index_operations;
 use crate::logging;
 use crate::memory_table;
 use crate::state;
-use crate::types::{IndexFilterType, IndexInfo, LogStatement};
+use crate::types::{IndexFilterType, IndexInfo, LogStatement, SslMode};
 use anyhow::Result;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -23,8 +23,7 @@ pub struct WorkerConfig {
     pub skip_active_vacuums: bool,
     pub bloat_threshold: Option<u8>,
     pub concurrently: bool,
-    pub use_ssl: bool,
-    pub accept_invalid_certs: bool,
+    pub sslmode: SslMode,
     pub ssl_ca_cert: Option<String>,
     pub ssl_client_cert: Option<String>,
     pub ssl_client_key: Option<String>,

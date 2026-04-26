@@ -312,25 +312,26 @@ fn test_plan_connection_flags() {
 }
 
 #[test]
-fn test_plan_ssl_flags() {
+fn test_plan_ssl_require() {
     let mut cmd = get_cmd();
     cmd.arg("plan")
         .arg("--schema")
         .arg("public")
-        .arg("--ssl")
+        .arg("--sslmode")
+        .arg("require")
         .env_clear()
         .assert()
         .code(predicate::ne(2));
 }
 
 #[test]
-fn test_plan_ssl_self_signed() {
+fn test_plan_ssl_verify_ca() {
     let mut cmd = get_cmd();
     cmd.arg("plan")
         .arg("--schema")
         .arg("public")
-        .arg("--ssl")
-        .arg("--ssl-self-signed")
+        .arg("--sslmode")
+        .arg("verify-ca")
         .env_clear()
         .assert()
         .code(predicate::ne(2));

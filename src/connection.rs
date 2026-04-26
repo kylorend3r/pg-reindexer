@@ -4,12 +4,12 @@ use crate::config::{
     DEFAULT_POSTGRES_DATABASE, DEFAULT_POSTGRES_USERNAME,
 };
 use crate::credentials::get_password_from_pgpass;
-use crate::types::LogStatement;
+use crate::types::{LogStatement, SslMode};
 use anyhow::{Context, Result};
 use native_tls::{Certificate, Identity, TlsConnector};
 use postgres_native_tls::MakeTlsConnector;
 use std::{env, fs};
-use tokio_postgres::{Config, NoTls, config::SslMode};
+use tokio_postgres::{Config, NoTls, config::SslMode as TokioSslMode};
 use zeroize::Zeroizing;
 
 /// Password wrapper that zeroes memory on drop.
@@ -48,8 +48,7 @@ pub struct ConnectionConfig {
     pub database: String,
     pub username: String,
     pub password: Option<SecretString>,
-    pub ssl: bool,
-    pub ssl_self_signed: bool,
+    pub sslmode: SslMode,
     pub ssl_ca_cert: Option<String>,
     pub ssl_client_cert: Option<String>,
     pub ssl_client_key: Option<String>,
@@ -70,8 +69,7 @@ impl ConnectionConfig {
         database: Option<String>,
         username: Option<String>,
         password: Option<String>,
-        ssl: bool,
-        ssl_self_signed: bool,
+        sslmode: SslMode,
         ssl_ca_cert: Option<String>,
         ssl_client_cert: Option<String>,
         ssl_client_key: Option<String>,
@@ -113,8 +111,7 @@ impl ConnectionConfig {
             database,
             username,
             password,
-            ssl,
-            ssl_self_signed,
+            sslmode,
             ssl_ca_cert,
             ssl_client_cert,
             ssl_client_key,
@@ -280,125 +277,119 @@ pub async fn set_session_parameters(
 // Create a new database connection with SSL support (without setting session parameters)
 pub async fn create_connection_ssl(
     connection_string: &str,
-    use_ssl: bool,
-    accept_invalid_certs: bool,
+    sslmode: &SslMode,
     ssl_ca_cert: Option<String>,
     ssl_client_cert: Option<String>,
     ssl_client_key: Option<String>,
     logger: &crate::logging::Logger,
 ) -> Result<tokio_postgres::Client> {
-    if use_ssl {
-        logger.log(
-            crate::logging::LogLevel::Info,
-            "Creating connection to PostgreSQL",
-        );
-        // Parse connection string into Config
-        let mut config: Config = connection_string
-            .parse()
-            .context("Failed to parse connection string")?;
+    logger.log(
+        crate::logging::LogLevel::Info,
+        "Creating connection to PostgreSQL",
+    );
 
-        // Set SSL mode
-        config.ssl_mode(SslMode::Require);
-
-        let (client, connection) = {
-            let mut tls_builder = TlsConnector::builder();
-
-            // Handle custom CA certificate
-            if let Some(ca_cert_path) = &ssl_ca_cert {
-                logger.log(
-                    crate::logging::LogLevel::Info,
-                    &format!("Loading CA certificate from: {}", ca_cert_path),
-                );
-                let ca_cert_data =
-                    fs::read(ca_cert_path).context("Failed to read CA certificate file")?;
-                let ca_cert = Certificate::from_pem(&ca_cert_data)
-                    .context("Failed to parse CA certificate")?;
-                tls_builder.add_root_certificate(ca_cert);
-            }
-
-            // Handle client certificate and key
-            if let (Some(client_cert_path), Some(client_key_path)) =
-                (&ssl_client_cert, &ssl_client_key)
-            {
-                logger.log(
-                    crate::logging::LogLevel::Info,
-                    &format!("Loading client certificate from: {}", client_cert_path),
-                );
-                let client_cert_data =
-                    fs::read(client_cert_path).context("Failed to read client certificate file")?;
-
-                logger.log(
-                    crate::logging::LogLevel::Info,
-                    &format!("Loading client key from: {}", client_key_path),
-                );
-                let client_key_data =
-                    fs::read(client_key_path).context("Failed to read client key file")?;
-
-                // Combine certificate and key into a single PEM for Identity
-                let mut identity_data = client_cert_data.clone();
-                identity_data.extend_from_slice(&client_key_data);
-
-                let identity = Identity::from_pkcs12(&identity_data, "")
-                    .or_else(|_| {
-                        // Try PKCS8 format if PKCS12 fails
-                        Identity::from_pkcs8(&client_cert_data, &client_key_data)
-                    })
-                    .context("Failed to parse client certificate and key")?;
-
-                tls_builder.identity(identity);
-            } else if ssl_client_cert.is_some() || ssl_client_key.is_some() {
-                return Err(anyhow::anyhow!(
-                    "Both --ssl-client-cert and --ssl-client-key must be provided together"
-                ));
-            }
-
-            // Handle invalid certificate acceptance
-            if accept_invalid_certs {
-                logger.log(
-                    crate::logging::LogLevel::Info,
-                    "Connection configured to allow self-signed certificates",
-                );
-                tls_builder.danger_accept_invalid_certs(true);
-            }
-
-            let tls_connector = tls_builder
-                .build()
-                .context("Failed to create TLS connector")?;
-
-            let tls = MakeTlsConnector::new(tls_connector);
-            config
-                .connect(tls)
-                .await
-                .context("ERROR: Failed to connect to PostgreSQL with SSL")?
-        };
-
-        // Spawn the connection to run in the background
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("Connection error: {}", e);
-            }
-        });
-
-        Ok(client)
-    } else {
-        logger.log(
-            crate::logging::LogLevel::Info,
-            "Creating connection to PostgreSQL",
-        );
-        // Connect without SSL
+    if *sslmode == SslMode::Disable {
         let (client, connection) = tokio_postgres::connect(connection_string, NoTls)
             .await
             .context("ERROR: Failed to connect to PostgreSQL")?;
 
-        // Spawn the connection to run in the background
         tokio::spawn(async move {
             if let Err(e) = connection.await {
                 eprintln!("Connection error: {}", e);
             }
         });
 
-        Ok(client)
+        return Ok(client);
     }
+
+    // SSL path
+    let mut config: Config = connection_string
+        .parse()
+        .context("Failed to parse connection string")?;
+    config.ssl_mode(TokioSslMode::Require);
+
+    let mut tls_builder = TlsConnector::builder();
+
+    match sslmode {
+        SslMode::Require => {
+            // Encrypt only — skip certificate and hostname verification.
+            // Equivalent to libpq sslmode=require.
+            tls_builder.danger_accept_invalid_certs(true);
+            tls_builder.danger_accept_invalid_hostnames(true);
+        }
+        SslMode::VerifyCa => {
+            // Verify the certificate chain but not the hostname.
+            tls_builder.danger_accept_invalid_hostnames(true);
+        }
+        SslMode::VerifyFull => {
+            // native-tls default: verify both certificate chain and hostname.
+        }
+        SslMode::Disable => unreachable!(),
+    }
+
+    // Optional custom CA certificate
+    if let Some(ca_cert_path) = &ssl_ca_cert {
+        logger.log(
+            crate::logging::LogLevel::Info,
+            &format!("Loading CA certificate from: {}", ca_cert_path),
+        );
+        let ca_cert_data = fs::read(ca_cert_path).context("Failed to read CA certificate file")?;
+        let ca_cert =
+            Certificate::from_pem(&ca_cert_data).context("Failed to parse CA certificate")?;
+        tls_builder.add_root_certificate(ca_cert);
+    }
+
+    // Optional client certificate + key (mutual TLS)
+    match (&ssl_client_cert, &ssl_client_key) {
+        (Some(cert_path), Some(key_path)) => {
+            logger.log(
+                crate::logging::LogLevel::Info,
+                &format!("Loading client certificate from: {}", cert_path),
+            );
+            let cert_data =
+                fs::read(cert_path).context("Failed to read client certificate file")?;
+
+            logger.log(
+                crate::logging::LogLevel::Info,
+                &format!("Loading client key from: {}", key_path),
+            );
+            let key_data = fs::read(key_path).context("Failed to read client key file")?;
+
+            let mut identity_data = cert_data.clone();
+            identity_data.extend_from_slice(&key_data);
+
+            let identity = Identity::from_pkcs12(&identity_data, "")
+                .or_else(|_| Identity::from_pkcs8(&cert_data, &key_data))
+                .context("Failed to parse client certificate and key")?;
+
+            tls_builder.identity(identity);
+        }
+        (None, None) => {}
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Both --ssl-client-cert and --ssl-client-key must be provided together"
+            ));
+        }
+    }
+
+    let tls = MakeTlsConnector::new(
+        tls_builder
+            .build()
+            .context("Failed to create TLS connector")?,
+    );
+
+    let (client, connection) = config
+        .connect(tls)
+        .await
+        .context("ERROR: Failed to connect to PostgreSQL with SSL")?;
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    Ok(client)
 }
 
 // Create a new database connection with session parameters set and SSL support
@@ -409,18 +400,15 @@ pub async fn create_connection_with_session_parameters_ssl(
     maintenance_io_concurrency: u64,
     lock_timeout_seconds: u64,
     log_statement: LogStatement,
-    use_ssl: bool,
-    accept_invalid_certs: bool,
+    sslmode: &SslMode,
     ssl_ca_cert: Option<String>,
     ssl_client_cert: Option<String>,
     ssl_client_key: Option<String>,
     logger: &crate::logging::Logger,
 ) -> Result<tokio_postgres::Client> {
-    // Create connection using the shared SSL connection logic
     let client = create_connection_ssl(
         connection_string,
-        use_ssl,
-        accept_invalid_certs,
+        sslmode,
         ssl_ca_cert,
         ssl_client_cert,
         ssl_client_key,
@@ -444,7 +432,9 @@ pub async fn create_connection_with_session_parameters_ssl(
 
 #[cfg(test)]
 mod tests {
-    use super::escape_libpq_value;
+    use super::{create_connection_ssl, escape_libpq_value};
+    use crate::logging::Logger;
+    use crate::types::SslMode;
 
     #[test]
     fn plain_alphanumeric_is_unchanged() {
@@ -474,5 +464,56 @@ mod tests {
     #[test]
     fn empty_string_is_unchanged() {
         assert_eq!(escape_libpq_value(""), "");
+    }
+
+    fn silent_logger() -> Logger {
+        Logger::new_with_silence(String::new(), true)
+    }
+
+    // The cert/key mismatch check fires before any network I/O, so these
+    // tests do not require a running PostgreSQL instance.
+
+    #[tokio::test]
+    async fn ssl_client_cert_without_key_returns_error() {
+        let logger = silent_logger();
+        let err = create_connection_ssl(
+            "host=localhost port=5432 dbname=postgres user=postgres",
+            &SslMode::Require,
+            None,
+            Some("client.pem".to_string()),
+            None, // key intentionally omitted
+            &logger,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Both --ssl-client-cert and --ssl-client-key must be provided together"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn ssl_client_key_without_cert_returns_error() {
+        let logger = silent_logger();
+        let err = create_connection_ssl(
+            "host=localhost port=5432 dbname=postgres user=postgres",
+            &SslMode::Require,
+            None,
+            None, // cert intentionally omitted
+            Some("client.key".to_string()),
+            &logger,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Both --ssl-client-cert and --ssl-client-key must be provided together"),
+            "unexpected error: {}",
+            err
+        );
     }
 }
