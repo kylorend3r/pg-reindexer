@@ -23,7 +23,6 @@ fn analyze_sql_template_for_version(pg_version: i32) -> &'static str {
 fn resolve_analyze_targets(
     schemas: &[String],
     analyze_tables: &[String],
-    completed_tables: &HashSet<(String, String)>,
 ) -> Vec<(String, String)> {
     let mut targets = Vec::new();
 
@@ -31,10 +30,7 @@ fn resolve_analyze_targets(
         if let Some((schema, table)) = analyze_target.split_once('.') {
             let schema_name = schema.trim().to_string();
             let table_name = table.trim().to_string();
-            if !schema_name.is_empty()
-                && !table_name.is_empty()
-                && completed_tables.contains(&(schema_name.clone(), table_name.clone()))
-            {
+            if !schema_name.is_empty() && !table_name.is_empty() {
                 targets.push((schema_name, table_name));
             }
             continue;
@@ -46,9 +42,7 @@ fn resolve_analyze_targets(
         }
 
         for schema_name in schemas {
-            if completed_tables.contains(&(schema_name.clone(), table_name.clone())) {
-                targets.push((schema_name.clone(), table_name.clone()));
-            }
+            targets.push((schema_name.clone(), table_name.clone()));
         }
     }
 
@@ -342,15 +336,49 @@ impl ReindexOrchestrator {
         };
 
         let sql_template = analyze_sql_template_for_version(pg_version);
-        let targets = resolve_analyze_targets(schemas, analyze_tables, completed_tables);
+        let targets = resolve_analyze_targets(schemas, analyze_tables);
 
         for (schema_name, table_name) in targets {
+            // Check 1: at least one index on this table was successfully reindexed
+            if !completed_tables.contains(&(schema_name.clone(), table_name.clone())) {
+                self.logger.log(
+                    logging::LogLevel::Info,
+                    &format!(
+                        "Skipping ANALYZE for {}.{} — no indexes on this table were reindexed in this session",
+                        schema_name, table_name
+                    ),
+                );
+                continue;
+            }
+
+            // Check 2: table exists in the database
+            match crate::schema::table_exists(&self.client, &schema_name, &table_name).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.logger.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "Skipping ANALYZE for {}.{} — table does not exist",
+                            schema_name, table_name
+                        ),
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    self.logger.log(
+                        logging::LogLevel::Warning,
+                        &format!(
+                            "Skipping ANALYZE for {}.{} — failed to check table existence: {}",
+                            schema_name, table_name, e
+                        ),
+                    );
+                    continue;
+                }
+            }
+
             self.logger.log(
                 logging::LogLevel::Info,
-                &format!(
-                    "Running post-reindex ANALYZE on {}.{}",
-                    schema_name, table_name
-                ),
+                &format!("Running post-reindex ANALYZE on {}.{}", schema_name, table_name),
             );
 
             let query = sql_template
