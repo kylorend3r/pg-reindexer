@@ -18,6 +18,9 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
             asset_name: linux-musl
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            asset_name: linux-arm64-musl
           - target: x86_64-apple-darwin
             runner: macos-latest
             asset_name: macos-x86_64
@@ -34,7 +37,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install musl tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: endsWith(matrix.target, '-unknown-linux-musl')
         run: sudo apt-get install -y musl-tools
 
       - name: Cache dependencies
