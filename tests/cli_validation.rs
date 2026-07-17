@@ -380,6 +380,18 @@ fn test_silence_mode_flag() {
 }
 
 #[test]
+fn test_comment_flag() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema")
+        .arg("public")
+        .arg("--comment")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
 fn test_concurrently_flag() {
     let mut cmd = get_cmd();
     cmd.arg("--schema")
@@ -1340,6 +1352,15 @@ fn test_help_contains_pacing_ms() {
 }
 
 #[test]
+fn test_help_contains_comment() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("comment"));
+}
+
+#[test]
 fn test_pacing_ms_with_other_flags() {
     let mut cmd = get_cmd();
     cmd.arg("--schema")
@@ -1766,6 +1787,51 @@ tablespace = "pg_default"
     cmd.arg("--config")
         .arg(config_path)
         .arg("--tablespace").arg("fast_ssd")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+// --- comment tests ---
+
+#[test]
+fn test_comment_from_config_file() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+comment = true
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_comment_cli_overrides_config_file() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+comment = false
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .arg("--comment")
         .env_clear()
         .assert()
         .code(predicate::ne(2));

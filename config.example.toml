@@ -44,6 +44,7 @@ log-file = "reindexer.log"
 # tablespace = "fast_ssd"  # Optional: REINDEX ... TABLESPACE target (PG14+, must already exist)
 concurrently = true
 clean-orphaned-indexes = false
+# comment = true  # Optional: adds a COMMENT ON INDEX noting the reindex time
 
 # SSL settings
 ssl = false

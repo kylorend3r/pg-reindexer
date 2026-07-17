@@ -403,6 +403,7 @@ impl Logger {
         indexes: &[crate::types::IndexInfo],
         concurrently: bool,
         tablespace: Option<&str>,
+        comment: bool,
     ) {
         self.log(LogLevel::Info, "=== DRY RUN MODE ===");
         self.log(
@@ -421,6 +422,14 @@ impl Logger {
                 LogLevel::Info,
                 &format!("[{}/{}] {}", i + 1, indexes.len(), reindex_sql),
             );
+
+            if comment {
+                let comment_sql = format!(
+                    "COMMENT ON INDEX \"{}\".\"{}\" IS 'Reindexed by pg-reindexer at ...'",
+                    index.schema_name, index.index_name
+                );
+                self.log(LogLevel::Info, &format!("         {}", comment_sql));
+            }
         }
 
         self.log(

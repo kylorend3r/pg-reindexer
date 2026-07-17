@@ -23,6 +23,10 @@ pub fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
     }
 }
 
+pub(crate) fn escape_sql_literal(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
 /// Quote a PostgreSQL identifier (schema, table, index, or tablespace name)
 /// Identifiers are quoted with double quotes and any internal quotes are doubled
 pub(crate) fn quote_ident(ident: &str) -> String {
@@ -51,6 +55,15 @@ pub(crate) fn build_reindex_sql(
         (None, true) => format!("REINDEX INDEX CONCURRENTLY {}", target),
         (None, false) => format!("REINDEX INDEX {}", target),
     }
+}
+
+pub(crate) fn build_comment_sql(schema_name: &str, index_name: &str, comment_text: &str) -> String {
+    format!(
+        "COMMENT ON INDEX {}.{} IS '{}'",
+        quote_ident(schema_name),
+        quote_ident(index_name),
+        escape_sql_literal(comment_text)
+    )
 }
 
 pub async fn get_indexes_in_schema(
@@ -738,6 +751,7 @@ pub async fn worker_with_memory_table(
                 config.user_index_type,
                 config.session_id.clone(),
                 config.tablespace.clone(),
+                config.comment,
                 Some(connection_string.clone()),
                 Some(config.clone()),
             )
@@ -899,6 +913,7 @@ pub async fn reindex_index_with_memory_table(
     user_index_type: IndexFilterType,
     _session_id: Option<String>,
     tablespace: Option<String>,
+    comment: bool,
     connection_string: Option<String>,
     worker_config: Option<WorkerConfig>,
 ) -> Result<crate::types::ReindexStatus> {
@@ -1243,6 +1258,21 @@ pub async fn reindex_index_with_memory_table(
         return Ok(crate::types::ReindexStatus::ValidationFailed);
     }
 
+    // Add comment to index if requested
+    if comment {
+        let comment_text = format!(
+            "Reindexed by pg-reindexer at {}",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        );
+        let comment_sql = build_comment_sql(&index_info.schema_name, &index_info.index_name, &comment_text);
+        if let Err(e) = client.execute(&comment_sql, &[]).await {
+            logger.log(
+                logging::LogLevel::Warning,
+                &format!("Failed to set comment on {}.{}: {}", index_info.schema_name, index_info.index_name, e),
+            );
+        }
+    }
+
     // Save success record
     let index_data = crate::save::IndexData {
         schema_name: index_info.schema_name.clone(),
@@ -1430,6 +1460,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_escape_sql_literal_no_quotes() {
+        let result = escape_sql_literal("hello world");
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_escape_sql_literal_single_quote() {
+        let result = escape_sql_literal("it's a test");
+        assert_eq!(result, "it''s a test");
+    }
+
+    #[test]
+    fn test_escape_sql_literal_multiple_quotes() {
+        let result = escape_sql_literal("it's a 'quoted' string");
+        assert_eq!(result, "it''s a ''quoted'' string");
+    }
+
+    #[test]
     fn test_quote_ident_simple() {
         assert_eq!(quote_ident("public"), "\"public\"");
         assert_eq!(quote_ident("users"), "\"users\"");
@@ -1475,5 +1523,31 @@ mod tests {
             "REINDEX (TABLESPACE \"space\"\"name\") INDEX \"my\"\"schema\".\"idx\"\"name\""
         );
     }
-}
 
+    #[test]
+    fn test_build_comment_sql_basic() {
+        let result = build_comment_sql("public", "idx_test", "Reindexed by pg-reindexer at 2026-07-17");
+        assert_eq!(
+            result,
+            "COMMENT ON INDEX \"public\".\"idx_test\" IS 'Reindexed by pg-reindexer at 2026-07-17'"
+        );
+    }
+
+    #[test]
+    fn test_build_comment_sql_with_special_chars() {
+        let result = build_comment_sql("my_schema", "idx_col's_name", "Reindexed at 2026-07-17 10:00");
+        assert_eq!(
+            result,
+            "COMMENT ON INDEX \"my_schema\".\"idx_col's_name\" IS 'Reindexed at 2026-07-17 10:00'"
+        );
+    }
+
+    #[test]
+    fn test_build_comment_sql_with_comment_quotes() {
+        let result = build_comment_sql("schema", "index", "It's 'Reindexed'");
+        assert_eq!(
+            result,
+            "COMMENT ON INDEX \"schema\".\"index\" IS 'It''s ''Reindexed'''"
+        );
+    }
+}
