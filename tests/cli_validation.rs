@@ -30,7 +30,7 @@ fn test_version_flag() {
         .assert()
         .success()
         .stdout(predicate::str::contains("pg-reindexer"))
-        .stdout(predicate::str::contains("5.0.0"));
+        .stdout(predicate::str::contains("5.1.0"));
 }
 
 #[test]
