@@ -71,6 +71,7 @@ pub struct WorkerConfig {
     pub max_replica_lag_wait_secs: Option<u64>,
     pub pacing_ms: u64,
     pub log_statement: LogStatement,
+    pub tablespace: Option<String>,
 }
 
 /// Orchestrator for managing reindexing operations

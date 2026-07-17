@@ -3,6 +3,13 @@
 -- Run this script to set up test data for the reindexer tool
 
 -- ============================================================================
+-- Tablespace Setup (for testing --tablespace flag)
+-- ============================================================================
+-- Create a test tablespace in /tmp for testing purposes
+-- Note: In production, use a real disk path. /tmp works for testing only.
+CREATE TABLESPACE IF NOT EXISTS reindexer_test_space LOCATION '/tmp/pg_reindexer_test_space';
+
+-- ============================================================================
 -- Schema 1: ecommerce
 -- ============================================================================
 CREATE SCHEMA IF NOT EXISTS ecommerce;
@@ -21,11 +28,11 @@ CREATE TABLE IF NOT EXISTS ecommerce.users (
 );
 
 -- Unique constraint index (constraint type)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON ecommerce.users(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON ecommerce.users(email) TABLESPACE reindexer_test_space;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON ecommerce.users(username);
 
 -- Regular B-tree indexes
-CREATE INDEX IF NOT EXISTS idx_users_created_at ON ecommerce.users(created_at);
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON ecommerce.users(created_at) TABLESPACE reindexer_test_space;
 CREATE INDEX IF NOT EXISTS idx_users_status ON ecommerce.users(status);
 CREATE INDEX IF NOT EXISTS idx_users_last_name ON ecommerce.users(last_name);
 
@@ -52,11 +59,11 @@ CREATE TABLE IF NOT EXISTS ecommerce.products (
 );
 
 -- Unique constraint
-CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku_unique ON ecommerce.products(sku);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_products_sku_unique ON ecommerce.products(sku) TABLESPACE reindexer_test_space;
 
 -- Regular B-tree indexes
 CREATE INDEX IF NOT EXISTS idx_products_category ON ecommerce.products(category_id);
-CREATE INDEX IF NOT EXISTS idx_products_price ON ecommerce.products(price);
+CREATE INDEX IF NOT EXISTS idx_products_price ON ecommerce.products(price) TABLESPACE reindexer_test_space;
 CREATE INDEX IF NOT EXISTS idx_products_created_at ON ecommerce.products(created_at);
 CREATE INDEX IF NOT EXISTS idx_products_is_active ON ecommerce.products(is_active);
 
@@ -107,9 +114,9 @@ CREATE TABLE IF NOT EXISTS analytics.page_views (
 );
 
 -- Regular B-tree indexes
-CREATE INDEX IF NOT EXISTS idx_page_views_user_id ON analytics.page_views(user_id);
+CREATE INDEX IF NOT EXISTS idx_page_views_user_id ON analytics.page_views(user_id) TABLESPACE reindexer_test_space;
 CREATE INDEX IF NOT EXISTS idx_page_views_timestamp ON analytics.page_views(view_timestamp);
-CREATE INDEX IF NOT EXISTS idx_page_views_session_id ON analytics.page_views(session_id);
+CREATE INDEX IF NOT EXISTS idx_page_views_session_id ON analytics.page_views(session_id) TABLESPACE reindexer_test_space;
 CREATE INDEX IF NOT EXISTS idx_page_views_device_type ON analytics.page_views(device_type);
 
 -- Composite index
@@ -183,11 +190,11 @@ CREATE TABLE IF NOT EXISTS inventory.warehouses (
 );
 
 -- Unique constraint
-CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouses_code_unique ON inventory.warehouses(code);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_warehouses_code_unique ON inventory.warehouses(code) TABLESPACE reindexer_test_space;
 
 -- Regular B-tree indexes
 CREATE INDEX IF NOT EXISTS idx_warehouses_location ON inventory.warehouses(location);
-CREATE INDEX IF NOT EXISTS idx_warehouses_is_active ON inventory.warehouses(is_active);
+CREATE INDEX IF NOT EXISTS idx_warehouses_is_active ON inventory.warehouses(is_active) TABLESPACE reindexer_test_space;
 
 -- Table: stock_items
 CREATE TABLE IF NOT EXISTS inventory.stock_items (

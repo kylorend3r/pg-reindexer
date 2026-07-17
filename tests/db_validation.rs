@@ -9,8 +9,22 @@
 //! - PG_PASSWORD (required)
 
 use anyhow::Result;
+use std::sync::Arc;
+use tempfile::TempDir;
 use tokio_postgres::{Client, NoTls};
 use uuid;
+
+/// Helper to create a Logger backed by a tempdir so tests don't leave stray log files
+fn create_test_logger() -> (Arc<pg_reindexer::logging::Logger>, TempDir) {
+    let temp_dir = TempDir::new().expect("failed to create tempdir for test logger");
+    let log_path = temp_dir.path().join("tablespace_test.log");
+    let logger = Arc::new(pg_reindexer::logging::Logger::new(
+        log_path.to_str().unwrap().to_string(),
+        false,
+        pg_reindexer::types::LogFormat::Text,
+    ));
+    (logger, temp_dir)
+}
 
 /// Helper to get database connection parameters from environment
 fn get_db_config() -> (String, u16, String, String, String) {
@@ -1036,6 +1050,72 @@ async fn test_get_max_replica_lag_bytes_repeated_calls() -> Result<()> {
             .unwrap_or_else(|e| panic!("Call {} failed: {}", i, e));
         assert!(lag >= 0, "Call {} returned negative lag: {}", i, lag);
     }
+
+    Ok(())
+}
+
+// --- tablespace tests ---
+
+#[tokio::test]
+#[ignore]
+async fn test_tablespace_exists_check_true() -> Result<()> {
+    let client = create_test_connection().await?;
+
+    let exists = pg_reindexer::schema::tablespace_exists(&client, "pg_default").await?;
+    assert!(exists, "pg_default tablespace should exist");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_tablespace_exists_check_false() -> Result<()> {
+    let client = create_test_connection().await?;
+    let bogus_name = format!("nonexistent_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+
+    let exists = pg_reindexer::schema::tablespace_exists(&client, &bogus_name).await?;
+    assert!(!exists, "Bogus tablespace should not exist");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_validate_tablespace_none_is_noop() -> Result<()> {
+    let client = create_test_connection().await?;
+    let (logger, _temp_dir) = create_test_logger();
+
+    let result = pg_reindexer::validation::validate_tablespace(&client, &logger, None).await;
+    assert!(result.is_ok(), "validate_tablespace(None) should always succeed");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_validate_tablespace_existing_passes() -> Result<()> {
+    let client = create_test_connection().await?;
+    let (logger, _temp_dir) = create_test_logger();
+
+    let result = pg_reindexer::validation::validate_tablespace(&client, &logger, Some("pg_default")).await;
+    assert!(result.is_ok(), "validate_tablespace(pg_default) should succeed on PG14+");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_validate_tablespace_missing_errors() -> Result<()> {
+    let client = create_test_connection().await?;
+    let (logger, _temp_dir) = create_test_logger();
+    let bogus_name = format!("nonexistent_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+
+    let result = pg_reindexer::validation::validate_tablespace(&client, &logger, Some(&bogus_name)).await;
+    assert!(result.is_err(), "validate_tablespace(nonexistent) should fail");
+    assert!(
+        result.unwrap_err().to_string().contains("does not exist"),
+        "Error message should mention 'does not exist'"
+    );
 
     Ok(())
 }

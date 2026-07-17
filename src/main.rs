@@ -272,6 +272,13 @@ struct Args {
     )]
     exclude_indexes: Option<String>,
 
+    /// Move indexes to this tablespace during reindex (REINDEX ... TABLESPACE, requires PG14+)
+    #[arg(
+        long,
+        help = "Rebuild indexes onto this tablespace using REINDEX (TABLESPACE ...). Requires PostgreSQL 14+. The tablespace must already exist."
+    )]
+    tablespace: Option<String>,
+
     /// Resume reindexing from previous state
     #[arg(
         long,
@@ -376,6 +383,7 @@ struct Config {
     max_replica_lag_wait_secs: Option<u64>,
     pacing_ms: Option<u64>,
     log_statement: Option<String>,
+    tablespace: Option<String>,
 }
 
 fn resolve_env_interpolation(value: Option<String>) -> Option<String> {
@@ -626,6 +634,9 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
                 args.log_statement = v;
             }
         }
+    }
+    if args.tablespace.is_none() {
+        args.tablespace = config_file.tablespace;
     }
 
     args
@@ -1018,6 +1029,14 @@ async fn process_database(
     )
     .await?;
 
+    // Validate tablespace if provided
+    validation::validate_tablespace(
+        &client,
+        &logger_arc,
+        args.tablespace.as_deref(),
+    )
+    .await?;
+
     if schemas.len() == 1 {
         logger_arc.log(
             logging::LogLevel::Info,
@@ -1294,7 +1313,7 @@ async fn process_database(
     }
 
     if args.dry_run {
-        logger_arc.log_dry_run(&indexes);
+        logger_arc.log_dry_run(&indexes, args.concurrently, args.tablespace.as_deref());
         return Ok(());
     }
 
@@ -1576,6 +1595,7 @@ async fn process_database(
         max_replica_lag_wait_secs: args.max_replica_lag_wait_secs,
         pacing_ms: args.pacing_ms.unwrap_or(10),
         log_statement: args.log_statement,
+        tablespace: args.tablespace.clone(),
     };
 
     // Create and spawn worker tasks

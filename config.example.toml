@@ -41,6 +41,7 @@ log-file = "reindexer.log"
 
 # Optional settings
 # reindex-only-bloated = 15  # Only reindex indexes with bloat >= 15%
+# tablespace = "fast_ssd"  # Optional: REINDEX ... TABLESPACE target (PG14+, must already exist)
 concurrently = true
 clean-orphaned-indexes = false
 

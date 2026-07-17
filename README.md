@@ -233,6 +233,7 @@ Options:
       --ssl-client-cert <FILE>                          Path to client certificate (.pem)
       --ssl-client-key <FILE>                           Path to client private key (.pem)
       --exclude-indexes <INDEXES>                       Comma-separated index names to exclude
+      --tablespace <TABLESPACE>                         Rebuild indexes onto this tablespace (REINDEX ... TABLESPACE, requires PG14+)
       --resume                                          Resume from previous state
       --silence-mode                                    Suppress terminal output except startup/completion
   -h, --help                                            Print help
@@ -244,6 +245,7 @@ Options:
 - **Multi-threading**: 1–32 configurable threads; same-table indexes are never processed concurrently
 - **Non-blocking**: Uses `REINDEX INDEX CONCURRENTLY` by default to avoid downtime
 - **Safety checks**: Detects active vacuums, inactive replication slots, and sync replication before proceeding
+- **Tablespace targeting**: Optional `--tablespace` rebuilds indexes onto a different tablespace via `REINDEX (TABLESPACE ...)`; validated to exist (and requires PG14+) before any work starts
 - **Retry logic**: Automatically retries transient errors (lock timeouts, deadlocks, connection issues) up to 3 times
 - **Bloat detection**: Filter indexes by bloat ratio to target only indexes that need maintenance
 - **Resume**: Tracks state in a `reindexer` schema; interrupted sessions can be resumed with `--resume`

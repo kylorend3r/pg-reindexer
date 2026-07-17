@@ -129,6 +129,21 @@ pub async fn table_exists(client: &Client, schema_name: &str, table_name: &str) 
     }
 }
 
+/// Check if a tablespace exists in the database
+pub async fn tablespace_exists(client: &Client, tablespace_name: &str) -> Result<bool> {
+    let rows = client
+        .query(crate::queries::CHECK_TABLESPACE_EXISTS, &[&tablespace_name])
+        .await
+        .context("Failed to check if tablespace exists")?;
+
+    if let Some(row) = rows.first() {
+        let exists: bool = row.get(0);
+        Ok(exists)
+    } else {
+        Ok(false)
+    }
+}
+
 /// Discover all user schemas in the database (excluding system schemas)
 pub async fn discover_all_user_schemas(client: &Client) -> Result<Vec<String>> {
     let rows = client

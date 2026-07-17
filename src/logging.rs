@@ -398,7 +398,12 @@ impl Logger {
         }
     }
 
-    pub fn log_dry_run(&self, indexes: &[crate::types::IndexInfo]) {
+    pub fn log_dry_run(
+        &self,
+        indexes: &[crate::types::IndexInfo],
+        concurrently: bool,
+        tablespace: Option<&str>,
+    ) {
         self.log(LogLevel::Info, "=== DRY RUN MODE ===");
         self.log(
             LogLevel::Info,
@@ -406,9 +411,11 @@ impl Logger {
         );
 
         for (i, index) in indexes.iter().enumerate() {
-            let reindex_sql = format!(
-                "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
-                index.schema_name, index.index_name
+            let reindex_sql = crate::index_operations::build_reindex_sql(
+                &index.schema_name,
+                &index.index_name,
+                concurrently,
+                tablespace,
             );
             self.log(
                 LogLevel::Info,

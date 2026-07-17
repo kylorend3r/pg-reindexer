@@ -23,6 +23,36 @@ pub fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
     }
 }
 
+/// Quote a PostgreSQL identifier (schema, table, index, or tablespace name)
+/// Identifiers are quoted with double quotes and any internal quotes are doubled
+pub(crate) fn quote_ident(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+/// Build the REINDEX SQL statement with optional TABLESPACE support
+pub(crate) fn build_reindex_sql(
+    schema_name: &str,
+    index_name: &str,
+    concurrently: bool,
+    tablespace: Option<&str>,
+) -> String {
+    let target = format!("{}.{}", quote_ident(schema_name), quote_ident(index_name));
+    match (tablespace, concurrently) {
+        (Some(ts), true) => format!(
+            "REINDEX (TABLESPACE {}, CONCURRENTLY) INDEX {}",
+            quote_ident(ts),
+            target
+        ),
+        (Some(ts), false) => format!(
+            "REINDEX (TABLESPACE {}) INDEX {}",
+            quote_ident(ts),
+            target
+        ),
+        (None, true) => format!("REINDEX INDEX CONCURRENTLY {}", target),
+        (None, false) => format!("REINDEX INDEX {}", target),
+    }
+}
+
 pub async fn get_indexes_in_schema(
     client: &tokio_postgres::Client,
     schema_name: &str,
@@ -707,6 +737,7 @@ pub async fn worker_with_memory_table(
                 config.concurrently,
                 config.user_index_type,
                 config.session_id.clone(),
+                config.tablespace.clone(),
                 Some(connection_string.clone()),
                 Some(config.clone()),
             )
@@ -867,6 +898,7 @@ pub async fn reindex_index_with_memory_table(
     concurrently: bool,
     user_index_type: IndexFilterType,
     _session_id: Option<String>,
+    tablespace: Option<String>,
     connection_string: Option<String>,
     worker_config: Option<WorkerConfig>,
 ) -> Result<crate::types::ReindexStatus> {
@@ -897,17 +929,12 @@ pub async fn reindex_index_with_memory_table(
         ),
     );
 
-    let reindex_sql = if concurrently {
-        format!(
-            "REINDEX INDEX CONCURRENTLY \"{}\".\"{}\"",
-            index_info.schema_name, index_info.index_name
-        )
-    } else {
-        format!(
-            "REINDEX INDEX \"{}\".\"{}\"",
-            index_info.schema_name, index_info.index_name
-        )
-    };
+    let reindex_sql = build_reindex_sql(
+        &index_info.schema_name,
+        &index_info.index_name,
+        concurrently,
+        tablespace.as_deref(),
+    );
 
     // Check if the index is invalid before reindexing
     let index_is_valid =
@@ -1397,3 +1424,56 @@ pub fn filter_indexes(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quote_ident_simple() {
+        assert_eq!(quote_ident("public"), "\"public\"");
+        assert_eq!(quote_ident("users"), "\"users\"");
+    }
+
+    #[test]
+    fn test_quote_ident_with_quote() {
+        assert_eq!(quote_ident("my\"table"), "\"my\"\"table\"");
+    }
+
+    #[test]
+    fn test_build_reindex_sql_no_tablespace_no_concurrently() {
+        let sql = build_reindex_sql("public", "idx_users_id", false, None);
+        assert_eq!(sql, "REINDEX INDEX \"public\".\"idx_users_id\"");
+    }
+
+    #[test]
+    fn test_build_reindex_sql_no_tablespace_with_concurrently() {
+        let sql = build_reindex_sql("public", "idx_users_id", true, None);
+        assert_eq!(sql, "REINDEX INDEX CONCURRENTLY \"public\".\"idx_users_id\"");
+    }
+
+    #[test]
+    fn test_build_reindex_sql_with_tablespace_no_concurrently() {
+        let sql = build_reindex_sql("public", "idx_users_id", false, Some("fast_ssd"));
+        assert_eq!(sql, "REINDEX (TABLESPACE \"fast_ssd\") INDEX \"public\".\"idx_users_id\"");
+    }
+
+    #[test]
+    fn test_build_reindex_sql_with_tablespace_and_concurrently() {
+        let sql = build_reindex_sql("public", "idx_users_id", true, Some("fast_ssd"));
+        assert_eq!(
+            sql,
+            "REINDEX (TABLESPACE \"fast_ssd\", CONCURRENTLY) INDEX \"public\".\"idx_users_id\""
+        );
+    }
+
+    #[test]
+    fn test_build_reindex_sql_with_special_characters_in_names() {
+        let sql = build_reindex_sql("my\"schema", "idx\"name", false, Some("space\"name"));
+        assert_eq!(
+            sql,
+            "REINDEX (TABLESPACE \"space\"\"name\") INDEX \"my\"\"schema\".\"idx\"\"name\""
+        );
+    }
+}
+

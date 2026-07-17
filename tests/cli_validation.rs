@@ -1706,6 +1706,71 @@ log-statement = "none"
         .code(predicate::ne(2));
 }
 
+// --- tablespace tests ---
+
+#[test]
+fn test_tablespace_flag_parsing() {
+    let mut cmd = get_cmd();
+    cmd.arg("--schema").arg("public")
+        .arg("--tablespace").arg("pg_default")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(101))
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_help_contains_tablespace() {
+    let mut cmd = get_cmd();
+    cmd.arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tablespace"));
+}
+
+#[test]
+fn test_tablespace_from_config_file() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+tablespace = "pg_default"
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
+#[test]
+fn test_tablespace_cli_overrides_config_file() {
+    let mut config_file = Builder::new().suffix(".toml").tempfile().unwrap();
+    writeln!(
+        config_file.as_file_mut(),
+        r#"
+schema = "public"
+tablespace = "pg_default"
+"#
+    )
+    .unwrap();
+
+    let config_path = config_file.path().to_str().unwrap();
+    let mut cmd = get_cmd();
+    cmd.arg("--config")
+        .arg(config_path)
+        .arg("--tablespace").arg("fast_ssd")
+        .env_clear()
+        .assert()
+        .code(predicate::ne(2));
+}
+
 // --- pgpass permission tests ---
 
 #[cfg(unix)]
