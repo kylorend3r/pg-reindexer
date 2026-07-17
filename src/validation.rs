@@ -210,3 +210,50 @@ pub async fn validate_schemas_and_table(
     Ok(())
 }
 
+/// Validate the target tablespace exists and the server supports REINDEX ... TABLESPACE
+///
+/// Checks:
+/// - PostgreSQL version is 14+ (REINDEX ... TABLESPACE requires PG14+)
+/// - The specified tablespace exists in pg_catalog.pg_tablespace
+pub async fn validate_tablespace(
+    client: &Client,
+    logger: &Arc<Logger>,
+    tablespace: Option<&str>,
+) -> Result<()> {
+    let Some(tablespace) = tablespace else {
+        return Ok(());
+    };
+
+    let pg_version: i32 = client
+        .query_one(queries::GET_PG_VERSION_NUM, &[])
+        .await
+        .context("Failed to get PostgreSQL version for --tablespace check")?
+        .get(0);
+
+    if pg_version < 140000 {
+        return Err(anyhow::anyhow!(
+            "--tablespace requires PostgreSQL 14 or later (REINDEX ... TABLESPACE was added in PG14); detected version {}.",
+            pg_version
+        ));
+    }
+
+    logger.log(
+        crate::logging::LogLevel::Info,
+        &format!("Validating tablespace '{}' exists", tablespace),
+    );
+
+    if !schema::tablespace_exists(client, tablespace).await? {
+        return Err(anyhow::anyhow!(
+            "Tablespace '{}' does not exist in the database. Please verify the tablespace name and try again.",
+            tablespace
+        ));
+    }
+
+    logger.log(
+        crate::logging::LogLevel::Success,
+        &format!("Tablespace '{}' validation passed", tablespace),
+    );
+
+    Ok(())
+}
+

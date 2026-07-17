@@ -1039,3 +1039,84 @@ async fn test_get_max_replica_lag_bytes_repeated_calls() -> Result<()> {
 
     Ok(())
 }
+
+// --- tablespace tests ---
+
+#[tokio::test]
+#[ignore]
+async fn test_tablespace_exists_check_true() -> Result<()> {
+    let client = create_test_connection().await?;
+
+    let exists = pg_reindexer::schema::tablespace_exists(&client, "pg_default").await?;
+    assert!(exists, "pg_default tablespace should exist");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_tablespace_exists_check_false() -> Result<()> {
+    let client = create_test_connection().await?;
+    let bogus_name = format!("nonexistent_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+
+    let exists = pg_reindexer::schema::tablespace_exists(&client, &bogus_name).await?;
+    assert!(!exists, "Bogus tablespace should not exist");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_validate_tablespace_none_is_noop() -> Result<()> {
+    let client = create_test_connection().await?;
+    let logger = Arc::new(pg_reindexer::logging::Logger::new(
+        "tablespace_test",
+        pg_reindexer::logging::LogFormat::Text,
+        None,
+        false,
+    )?);
+
+    let result = pg_reindexer::validation::validate_tablespace(&client, &logger, None).await;
+    assert!(result.is_ok(), "validate_tablespace(None) should always succeed");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_validate_tablespace_existing_passes() -> Result<()> {
+    let client = create_test_connection().await?;
+    let logger = Arc::new(pg_reindexer::logging::Logger::new(
+        "tablespace_test",
+        pg_reindexer::logging::LogFormat::Text,
+        None,
+        false,
+    )?);
+
+    let result = pg_reindexer::validation::validate_tablespace(&client, &logger, Some("pg_default")).await;
+    assert!(result.is_ok(), "validate_tablespace(pg_default) should succeed on PG14+");
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_validate_tablespace_missing_errors() -> Result<()> {
+    let client = create_test_connection().await?;
+    let logger = Arc::new(pg_reindexer::logging::Logger::new(
+        "tablespace_test",
+        pg_reindexer::logging::LogFormat::Text,
+        None,
+        false,
+    )?);
+    let bogus_name = format!("nonexistent_{}", uuid::Uuid::new_v4().to_string().replace("-", "_"));
+
+    let result = pg_reindexer::validation::validate_tablespace(&client, &logger, Some(&bogus_name)).await;
+    assert!(result.is_err(), "validate_tablespace(nonexistent) should fail");
+    assert!(
+        result.unwrap_err().to_string().contains("does not exist"),
+        "Error message should mention 'does not exist'"
+    );
+
+    Ok(())
+}
