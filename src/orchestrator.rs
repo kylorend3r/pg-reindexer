@@ -72,6 +72,7 @@ pub struct WorkerConfig {
     pub pacing_ms: u64,
     pub log_statement: LogStatement,
     pub tablespace: Option<String>,
+    pub comment: bool,
 }
 
 /// Orchestrator for managing reindexing operations

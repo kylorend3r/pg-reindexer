@@ -235,6 +235,7 @@ Options:
       --exclude-indexes <INDEXES>                       Comma-separated index names to exclude
       --tablespace <TABLESPACE>                         Rebuild indexes onto this tablespace (REINDEX ... TABLESPACE, requires PG14+)
       --resume                                          Resume from previous state
+      --comment                                         Add COMMENT ON INDEX after successful reindex
       --silence-mode                                    Suppress terminal output except startup/completion
   -h, --help                                            Print help
   -V, --version                                         Print version
@@ -250,6 +251,7 @@ Options:
 - **Bloat detection**: Filter indexes by bloat ratio to target only indexes that need maintenance
 - **Resume**: Tracks state in a `reindexer` schema; interrupted sessions can be resumed with `--resume`
 - **Graceful shutdown**: SIGINT/SIGTERM resets in-progress indexes to pending for seamless resume
+- **Index annotations**: Optional `--comment` stamps each index with a note including when it was last reindexed
 - **Multiple databases/schemas**: Comma-separated lists for batch operations across databases or schemas
 - **SSL/TLS**: Full certificate support including custom CA and mutual TLS
 - **Config file**: TOML configuration with CLI override support

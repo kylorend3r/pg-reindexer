@@ -287,6 +287,14 @@ struct Args {
     )]
     resume: bool,
 
+    /// Add comment to indexes after successful reindex
+    #[arg(
+        long,
+        default_value = "false",
+        help = "Add a COMMENT ON INDEX after each successful reindex noting it was reindexed by pg-reindexer and when. Skipped entirely if not set."
+    )]
+    comment: bool,
+
     /// Silence mode - only log to file, print only startup and completion messages to terminal
     #[arg(
         long,
@@ -374,6 +382,7 @@ struct Config {
     ssl_client_key: Option<String>,
     exclude_indexes: Option<String>,
     resume: Option<bool>,
+    comment: Option<bool>,
     silence_mode: Option<bool>,
     order_by_size: Option<String>,
     ask_confirmation: Option<bool>,
@@ -590,6 +599,11 @@ fn merge_config(config_file: Config, mut args: Args) -> Args {
     if let Some(resume) = config_file.resume {
         if args.resume != resume {
             args.resume = resume;
+        }
+    }
+    if let Some(comment) = config_file.comment {
+        if args.comment != comment {
+            args.comment = comment;
         }
     }
     if let Some(silence) = config_file.silence_mode {
@@ -1313,7 +1327,7 @@ async fn process_database(
     }
 
     if args.dry_run {
-        logger_arc.log_dry_run(&indexes, args.concurrently, args.tablespace.as_deref());
+        logger_arc.log_dry_run(&indexes, args.concurrently, args.tablespace.as_deref(), args.comment);
         return Ok(());
     }
 
@@ -1596,6 +1610,7 @@ async fn process_database(
         pacing_ms: args.pacing_ms.unwrap_or(10),
         log_statement: args.log_statement,
         tablespace: args.tablespace.clone(),
+        comment: args.comment,
     };
 
     // Create and spawn worker tasks
