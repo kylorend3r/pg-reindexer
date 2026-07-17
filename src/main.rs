@@ -1313,7 +1313,7 @@ async fn process_database(
     }
 
     if args.dry_run {
-        logger_arc.log_dry_run(&indexes);
+        logger_arc.log_dry_run(&indexes, args.concurrently, args.tablespace.as_deref());
         return Ok(());
     }
 

@@ -25,12 +25,12 @@ pub fn is_temporary_concurrent_reindex_index(index_name: &str) -> bool {
 
 /// Quote a PostgreSQL identifier (schema, table, index, or tablespace name)
 /// Identifiers are quoted with double quotes and any internal quotes are doubled
-fn quote_ident(ident: &str) -> String {
+pub(crate) fn quote_ident(ident: &str) -> String {
     format!("\"{}\"", ident.replace('"', "\"\""))
 }
 
 /// Build the REINDEX SQL statement with optional TABLESPACE support
-fn build_reindex_sql(
+pub(crate) fn build_reindex_sql(
     schema_name: &str,
     index_name: &str,
     concurrently: bool,
